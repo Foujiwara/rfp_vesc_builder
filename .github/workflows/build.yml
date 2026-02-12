@@ -56,12 +56,14 @@ jobs:
         run: |
           mkdir -p output/${{ steps.latest.outputs.tag }}
           cd official
-          for file in ../custom_hwconf/*.h; do
-            hw=$(basename "$file" .h)
-            make clean
-            make HW=$hw
-            cp build/*.bin ../output/${{ steps.latest.outputs.tag }}/${hw}-${{ steps.latest.outputs.tag }}.bin
-          done
+         for file in ../custom_hwconf/hw_*.h; do
+         name=$(basename "$file" .h)
+         hw=${name#hw_}
+         make clean
+         make HW=$hw
+         cp build/*.bin ../output/${{ steps.latest.outputs.tag }}/${hw}-${{ steps.latest.outputs.tag }}.bin
+         done
+
 
       - name: Push to archive
         uses: peaceiris/actions-gh-pages@v3
