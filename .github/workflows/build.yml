@@ -11,9 +11,18 @@ jobs:
       - name: Checkout builder repo
         uses: actions/checkout@v4
 
+      - name: Load builder configuration
+        run: |
+          if [ ! -f builder.conf ]; then
+            echo "ERROR: builder.conf not found"
+            exit 1
+          fi
+          cat builder.conf
+
       - name: Clone official VESC firmware
         run: |
-          git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
+          source builder.conf
+          git clone --depth 1 --branch "$TAG" https://github.com/vedderb/bldc.git bldc
 
       - name: Install system dependencies
         run: |
@@ -36,22 +45,13 @@ jobs:
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      - name: Build firmware (configurable)
+      - name: Build firmware (config driven)
         run: |
           set -e
+          source builder.conf
 
-          # ==============================
-          # USER CONFIGURATION
-          # ==============================
-          BUILD_MODE="single"        # all | single
-          SINGLE_MODEL="C350_V3"  # used only if BUILD_MODE=single
-
-          BUILD_NO_LIMITS="yes"  # yes | no
-          PREFIX_RFP="yes"       # yes | no
-
-          VERSION="V6.06"
-          TAG="release_6_06"
-          # ==============================
+          # Extract version from tag: release_6_06 → 6.06
+          VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
 
           mkdir -p archive/$TAG
 
@@ -63,9 +63,23 @@ jobs:
 
             TARGET="fw_${MODEL_TECH}${VARIANT}"
 
+            NAME_PREFIX=""
+            [ "$PREFIX_RFP" = "yes" ] && NAME_PREFIX="RFP_"
+
+            VARIANT_NAME=""
+            [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
+
+            FINAL_NAME="${NAME_PREFIX}${MODEL_TECH}${VARIANT_NAME}_${VERSION}"
+
             echo "------------------------------"
-            echo "Building $TARGET"
+            echo "Building $TARGET → $FINAL_NAME"
             echo "------------------------------"
+
+            # Patch HW_NAME dynamically
+            HFILE="bldc/hwconf/hw_${MODEL_TECH}.h"
+            if [ -f "$HFILE" ]; then
+              sed -i "s|#define HW_NAME.*|#define HW_NAME \"${FINAL_NAME}\"|g" "$HFILE"
+            fi
 
             cd bldc
             if make -n "$TARGET" >/dev/null 2>&1; then
@@ -77,21 +91,13 @@ jobs:
             fi
             cd ..
 
-            NAME_PREFIX=""
-            [ "$PREFIX_RFP" = "yes" ] && NAME_PREFIX="RFP_"
-
-            VARIANT_NAME=""
-            [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
-
             mkdir -p "archive/$TAG/$BRAND_DIR/$MODEL_DIR"
 
             cp "bldc/build/${MODEL_TECH}${VARIANT}/${MODEL_TECH}${VARIANT}.bin" \
-               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${NAME_PREFIX}${MODEL_TECH}${VARIANT_NAME}_${VERSION}.bin"
+               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${FINAL_NAME}.bin"
           }
 
           if [ "$BUILD_MODE" = "single" ]; then
-            echo ">>> SINGLE BUILD MODE: $SINGLE_MODEL"
-
             hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
             [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
 
@@ -104,8 +110,6 @@ jobs:
               build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
 
           else
-            echo ">>> FULL BUILD MODE"
-
             find custom_hwconf -name "hw_*.h" | while read hwfile; do
               MODEL_TECH=$(basename "$hwfile" .h)
               MODEL_TECH=${MODEL_TECH#hw_}
