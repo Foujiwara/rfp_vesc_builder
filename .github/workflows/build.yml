@@ -7,94 +7,95 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
 
     steps:
+      # 1️⃣ Checkout du repo builder (pour custom_hwconf)
       - name: Checkout builder repo
         uses: actions/checkout@v3
 
-      - name: Get latest release_6 tag
+      # 2️⃣ Récupération de la DERNIÈRE release officielle VESC (release_6_xx)
+      - name: Get latest official VESC release
         id: latest
         run: |
           TAG=$(git ls-remote --tags https://github.com/vedderb/bldc.git \
-          | grep -o 'release_[0-9_]*' \
-          | sort -V \
-          | tail -n1)
+            | grep -o 'release_[0-9_]*' \
+            | sort -V \
+            | tail -n1)
 
-          echo "Latest tag is $TAG"
+          echo "Detected VESC release: $TAG"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-
-      - name: Check if already built
+      # 3️⃣ Vérifie si cette version existe déjà dans l’archive
+      - name: Check if version already archived
         id: check
         run: |
           git clone https://github.com/Foujiwara/rfp_fw_archive.git archive || true
+
           if [ -d "archive/${{ steps.latest.outputs.tag }}" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+      # 4️⃣ Stop si déjà compilé
       - name: Stop if already built
         if: steps.check.outputs.exists == 'true'
         run: |
-          echo "Version already compiled. Stopping."
+          echo "Firmware already archived, stopping."
           exit 0
 
-      - name: Clone official firmware
+      # 5️⃣ Clone du firmware officiel EXACTEMENT au tag release_X_XX
+      - name: Clone official VESC firmware
         run: |
-          git clone --depth 1 --branch ${{ steps.latest.outputs.tag }} \
-          https://github.com/vedderb/bldc.git official
+          git clone --branch ${{ steps.latest.outputs.tag }} \
+            https://github.com/vedderb/bldc.git official
 
-       - name: Disable Blackmagic (not needed for firmware)
-        run: |
-          rm -rf official/blackmagic
-
-
-      - name: Patch Blackmagic for GCC 10+
-        run: |
-          sed -i '/#include "exception.h"/a #include <inttypes.h>' bldc/blackmagic/target/adiv5.c
-
+      # 6️⃣ Injection de tes HW custom
       - name: Inject custom hwconf
         run: |
           cp custom_hwconf/* official/hwconf/
 
-      - name: Install ARM GCC 9 (compatible VESC)
+      # 7️⃣ Installation TOOLCHAIN EXACTE (Ubuntu 20.04)
+      - name: Install ARM toolchain
         run: |
           sudo apt update
-          sudo apt install -y wget tar make
-          wget https://developer.arm.com/-/media/Files/downloads/gnu-rm/9-2019q4/gcc-arm-none-eabi-9-2019-q4-major-x86_64-linux.tar.bz2
-          tar -xjf gcc-arm-none-eabi-9-2019-q4-major-x86_64-linux.tar.bz2
-          echo "$PWD/gcc-arm-none-eabi-9-2019-q4-major/bin" >> $GITHUB_PATH
+          sudo apt install -y \
+            gcc-arm-none-eabi \
+            make \
+            git \
+            wget \
+            libgl-dev \
+            libxcb-xinerama0
 
-
+      # 8️⃣ Build des HW custom UNIQUEMENT (méthode officielle : make <board>)
       - name: Build custom hardware
         run: |
           mkdir -p output/${{ steps.latest.outputs.tag }}
           cd official
 
-          # Affiche les boards supportées (debug utile)
+          echo "Supported boards:"
           make
 
           for file in ../custom_hwconf/hw_*.h; do
             name=$(basename "$file" .h)
             board=${name#hw_}
 
+            echo "=============================="
             echo "Building board: $board"
+            echo "=============================="
 
             make clean
             make $board
 
-            # Copie le firmware généré
             cp build/*.bin ../output/${{ steps.latest.outputs.tag }}/${board}-${{ steps.latest.outputs.tag }}.bin
           done
 
-
-
-      - name: Push to archive
+      # 9️⃣ Push vers le repo d’archive
+      - name: Push to firmware archive
         uses: peaceiris/actions-gh-pages@v3
         with:
           external_repository: Foujiwara/rfp_fw_archive
-          publish_dir: ./output
           publish_branch: main
+          publish_dir: ./output
           personal_token: ${{ secrets.ARCHIVE_TOKEN }}
