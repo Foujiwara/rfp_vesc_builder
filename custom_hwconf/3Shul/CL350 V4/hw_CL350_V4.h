@@ -1,6 +1,6 @@
 
 
-#define HW_NAME					"RageMechanics CL350 V4"
+#define HW_NAME					"CL350_V4"
 
 
 // HW properties
