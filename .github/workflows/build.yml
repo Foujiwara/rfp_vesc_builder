@@ -60,17 +60,20 @@ jobs:
          echo "$PWD/gcc-arm-none-eabi-10.3-2021.10/bin" >> $GITHUB_PATH
 
 
-      - name: Build custom hardware
-        run: |
-          mkdir -p output/${{ steps.latest.outputs.tag }}
-          cd official
-         for file in ../custom_hwconf/hw_*.h; do
-         name=$(basename "$file" .h)
-         hw=${name#hw_}
-         make clean
-         make HW=$hw
-         cp build/*.bin ../output/${{ steps.latest.outputs.tag }}/${hw}-${{ steps.latest.outputs.tag }}.bin
-         done
+- name: Build custom hardware
+  run: |
+    mkdir -p output/${{ steps.latest.outputs.tag }}
+    cd official
+
+    for file in ../custom_hwconf/hw_*.h; do
+      name=$(basename "$file" .h)
+      hw=${name#hw_}
+
+      make clean
+      make HW=$hw
+
+      cp build/*.bin ../output/${{ steps.latest.outputs.tag }}/${hw}-${{ steps.latest.outputs.tag }}.bin
+    done
 
 
       - name: Push to archive
