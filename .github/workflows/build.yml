@@ -1,4 +1,4 @@
-name: RFP VESC Builder (Stable)
+name: RFP VESC Firmware Builder
 
 on:
   workflow_dispatch:
@@ -11,106 +11,155 @@ jobs:
       - name: Checkout builder repo
         uses: actions/checkout@v4
 
-      # ===============================
-      # USER OPTIONS (SAFE)
-      # ===============================
-      - name: Resolve upstream (NO BUILD CHANGE)
+      # ======================================================
+      # LOAD CONFIG (SOURCE OF TRUTH)
+      # ======================================================
+      - name: Load builder configuration
         run: |
           set -e
 
-          # -------- USER CHOICE ----------
-          UPSTREAM_MODE="latest"
-          HW_NAME="C350ref"
-          PREFIX_RFP="yes"
-          # -------------------------------
-
-          echo "UPSTREAM_MODE=$UPSTREAM_MODE"
-
-          if [ "$UPSTREAM_MODE" = "latest" ]; then
-            TAG=$(git ls-remote --heads https://github.com/vedderb/bldc.git \
-              | grep 'refs/heads/release_' \
-              | sed 's|.*refs/heads/||' \
-              | sort -V \
-              | tail -n1)
-
-            VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-            IS_BETA="no"
-
-          elif [ "$UPSTREAM_MODE" = "master" ]; then
-            TAG="master"
-            VERSION="master"
-            IS_BETA="yes"
-
-          elif [[ "$UPSTREAM_MODE" == release_* ]]; then
-            TAG="$UPSTREAM_MODE"
-            VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-            IS_BETA="no"
-
-          else
-            echo "ERROR: invalid UPSTREAM_MODE"
+          if [ ! -f builder.conf ]; then
+            echo "ERROR: builder.conf not found"
             exit 1
           fi
+
+          source builder.conf
+
+          echo "CONFIG:"
+          echo "UPSTREAM_MODE=$UPSTREAM_MODE"
+          echo "BUILD_MODE=$BUILD_MODE"
+          echo "SINGLE_MODEL=$SINGLE_MODEL"
+          echo "BUILD_NO_LIMITS=$BUILD_NO_LIMITS"
+          echo "PREFIX_RFP=$PREFIX_RFP"
+
+          echo "UPSTREAM_MODE=$UPSTREAM_MODE" >> $GITHUB_ENV
+          echo "BUILD_MODE=$BUILD_MODE" >> $GITHUB_ENV
+          echo "SINGLE_MODEL=$SINGLE_MODEL" >> $GITHUB_ENV
+          echo "BUILD_NO_LIMITS=$BUILD_NO_LIMITS" >> $GITHUB_ENV
+          echo "PREFIX_RFP=$PREFIX_RFP" >> $GITHUB_ENV
+
+      # ======================================================
+      # RESOLVE UPSTREAM (RELEASE BRANCHES, NOT TAGS)
+      # ======================================================
+      - name: Resolve upstream
+        run: |
+          set -e
+
+          case "$UPSTREAM_MODE" in
+            latest)
+              TAG=$(git ls-remote --heads https://github.com/vedderb/bldc.git \
+                | grep 'refs/heads/release_' \
+                | sed 's|.*refs/heads/||' \
+                | sort -V \
+                | tail -n1)
+
+              if [ -z "$TAG" ]; then
+                echo "ERROR: no release branch found"
+                exit 1
+              fi
+
+              VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
+              IS_BETA="no"
+              ;;
+
+            master)
+              TAG="master"
+              VERSION="master"
+              IS_BETA="yes"
+              ;;
+
+            release_*)
+              TAG="$UPSTREAM_MODE"
+              VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
+              IS_BETA="no"
+              ;;
+
+            *)
+              echo "ERROR: invalid UPSTREAM_MODE=$UPSTREAM_MODE"
+              exit 1
+              ;;
+          esac
+
+          echo "Resolved upstream:"
+          echo "TAG=$TAG"
+          echo "VERSION=$VERSION"
+          echo "IS_BETA=$IS_BETA"
 
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "IS_BETA=$IS_BETA" >> $GITHUB_ENV
-          echo "HW_NAME=$HW_NAME" >> $GITHUB_ENV
-          echo "PREFIX_RFP=$PREFIX_RFP" >> $GITHUB_ENV
 
-          echo "Resolved:"
-          echo "TAG=$TAG"
-          echo "VERSION=$VERSION"
-          echo "BETA=$IS_BETA"
-
-      # ===============================
-      # OFFICIAL VESC FLOW (UNCHANGED)
-      # ===============================
+      # ======================================================
+      # OFFICIAL VESC BUILD FLOW (UNCHANGED)
+      # ======================================================
       - name: Clone VESC firmware
         run: |
           git clone --depth 1 --branch "$TAG" https://github.com/vedderb/bldc.git bldc
 
-      - name: Install dependencies
+      - name: Install build dependencies
         run: |
           sudo apt update
           sudo apt install -y build-essential git wget libgl-dev libxcb-xinerama0
 
-      - name: Install ARM SDK (official Makefile)
+      - name: Install ARM SDK (official)
         run: |
           cd bldc
           make arm_sdk_install
 
-      - name: Inject custom HW config
+      # ======================================================
+      # BUILD
+      # ======================================================
+      - name: Build firmware(s)
         run: |
-          cp custom_hwconf/$HW_NAME/* bldc/hwconf/
-
-      - name: Build firmware (OFFICIAL TARGET)
-        run: |
+          set -e
           cd bldc
-          make fw_$HW_NAME
 
-      # ===============================
-      # EXPORT (NON-DESTRUCTIVE)
-      # ===============================
-      - name: Export firmware
-        run: |
-          mkdir -p output/$HW_NAME
+          mkdir -p ../output
 
-          if [ "$PREFIX_RFP" = "yes" ]; then
-            OUT_NAME="RFP_${HW_NAME}_${VERSION}"
+          build_one() {
+            HW="$1"
+
+            echo "=============================="
+            echo "Building $HW"
+            echo "=============================="
+
+            make fw_$HW
+
+            NAME="${HW}_${VERSION}"
+
+            if [ "$PREFIX_RFP" = "yes" ]; then
+              NAME="RFP_${NAME}"
+            fi
+
+            if [ "$IS_BETA" = "yes" ]; then
+              NAME="${NAME}_BETA"
+            fi
+
+            mkdir -p ../output/$HW
+            cp build/$HW/$HW.bin ../output/$HW/${NAME}.bin
+          }
+
+          if [ "$BUILD_MODE" = "single" ]; then
+            build_one "$SINGLE_MODEL"
+
+            if [ "$BUILD_NO_LIMITS" = "yes" ]; then
+              build_one "${SINGLE_MODEL}_no_limits"
+            fi
+
+          elif [ "$BUILD_MODE" = "all" ]; then
+            for HW in $(make -s | grep '^fw_' | sed 's/fw_//'); do
+              build_one "$HW"
+            done
+
           else
-            OUT_NAME="${HW_NAME}_${VERSION}"
+            echo "ERROR: invalid BUILD_MODE=$BUILD_MODE"
+            exit 1
           fi
 
-          if [ "$IS_BETA" = "yes" ]; then
-            OUT_NAME="${OUT_NAME}_BETA"
-          fi
-
-          cp bldc/build/$HW_NAME/$HW_NAME.bin \
-             output/$HW_NAME/${OUT_NAME}.bin
-
-          echo "Exported: ${OUT_NAME}.bin"
-
-      - name: Push to archive (NO DELETE)
+      # ======================================================
+      # ARCHIVE EXPORT (NON-DESTRUCTIVE)
+      # ======================================================
+      - name: Push firmware to archive
         uses: peaceiris/actions-gh-pages@v3
         with:
           external_repository: Foujiwara/rfp_fw_archive
