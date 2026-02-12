@@ -1,4 +1,4 @@
-name: VESC Firmware Build (Clean)
+name: VESC Firmware Build (Official Method)
 
 on:
   workflow_dispatch:
@@ -12,44 +12,41 @@ jobs:
       - name: Checkout builder repo
         uses: actions/checkout@v4
 
-      # 2️⃣ Clone EXACT de la release officielle (VERROUILLÉE)
+      # 2️⃣ Clone EXACT de la release officielle
       - name: Clone official VESC firmware
         run: |
           git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
           cd bldc
           git describe --tags || true
 
-      # 3️⃣ PATCH MINIMAL OBLIGATOIRE (bug upstream connu)
-      - name: Patch PRIx64 bug (C standard)
-        run: |
-          sed -i \
-            -e 's/"0x%"PRIx32": 0x%"PRIx64"/"0x%" PRIx32 ": 0x%" PRIx64 "/g' \
-            -e 's/"0x%"PRIx32": %s - Unknown (PIDR = 0x%"PRIx64")/"0x%" PRIx32 ": %s - Unknown (PIDR = 0x%" PRIx64 ")"/g' \
-            bldc/blackmagic/target/adiv5.c
-
-      # 4️⃣ Injection de TES hwconf
-      - name: Inject custom hwconf
-        run: |
-          cp custom_hwconf/* bldc/hwconf/
-
-      # 5️⃣ Dépendances EXACTEMENT comme recommandé par le projet
-      - name: Install build dependencies
+      # 3️⃣ Dépendances système minimales
+      - name: Install system dependencies
         run: |
           sudo apt update
           sudo apt install -y \
             build-essential \
-            gcc-arm-none-eabi \
-            make \
             git \
+            make \
             wget \
             libgl-dev \
             libxcb-xinerama0
 
-      # 6️⃣ BUILD OFFICIEL – même commande que le projet
-      - name: Build firmware (fw_all)
+      # 4️⃣ Installation OFFICIELLE de la toolchain ARM (VESC)
+      - name: Install VESC ARM SDK (official)
         run: |
           cd bldc
-          make fw_all
+          make arm_sdk_install
+
+      # 5️⃣ Injection de TES hwconf custom
+      - name: Inject custom hwconf
+        run: |
+          cp custom_hwconf/* bldc/hwconf/
+
+      # 6️⃣ Build firmware – méthode OFFICIELLE
+      - name: Build firmware
+        run: |
+          cd bldc
+          make
 
       # 7️⃣ Collecte des binaires
       - name: Collect firmware binaries
