@@ -10,11 +10,11 @@ jobs:
     runs-on: ubuntu-20.04
 
     steps:
-      # 1️⃣ Checkout du repo builder (pour custom_hwconf)
+      # 1️⃣ Checkout du repo builder (celui qui contient custom_hwconf)
       - name: Checkout builder repo
         uses: actions/checkout@v3
 
-      # 2️⃣ Récupération de la DERNIÈRE release officielle VESC (release_6_xx)
+      # 2️⃣ Détection de la dernière release officielle VESC (release_6_xx)
       - name: Get latest official VESC release
         id: latest
         run: |
@@ -26,7 +26,7 @@ jobs:
           echo "Detected VESC release: $TAG"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      # 3️⃣ Vérifie si cette version existe déjà dans l’archive
+      # 3️⃣ Vérifie si cette version est déjà dans l’archive
       - name: Check if version already archived
         id: check
         run: |
@@ -45,18 +45,23 @@ jobs:
           echo "Firmware already archived, stopping."
           exit 0
 
-      # 5️⃣ Clone du firmware officiel EXACTEMENT au tag release_X_XX
+      # 5️⃣ Clone EXACTEMENT la release officielle détectée
       - name: Clone official VESC firmware
         run: |
           git clone --branch ${{ steps.latest.outputs.tag }} \
             https://github.com/vedderb/bldc.git official
 
-      # 6️⃣ Injection de tes HW custom
+      # 6️⃣ PATCH UPSTREAM — correction syntaxe PRIx64 (BUG OFFICIEL)
+      - name: Patch PRIx64 format bug (blackmagic)
+        run: |
+          sed -i 's/"0x%"PRIx64/"0x%" PRIx64/g' official/blackmagic/target/adiv5.c
+
+      # 7️⃣ Injection de tes HW custom
       - name: Inject custom hwconf
         run: |
           cp custom_hwconf/* official/hwconf/
 
-      # 7️⃣ Installation TOOLCHAIN EXACTE (Ubuntu 20.04)
+      # 8️⃣ Installation de la toolchain ARM compatible VESC
       - name: Install ARM toolchain
         run: |
           sudo apt update
@@ -68,7 +73,7 @@ jobs:
             libgl-dev \
             libxcb-xinerama0
 
-      # 8️⃣ Build des HW custom UNIQUEMENT (méthode officielle : make <board>)
+      # 9️⃣ Build des HW custom (méthode officielle : make <board>)
       - name: Build custom hardware
         run: |
           mkdir -p output/${{ steps.latest.outputs.tag }}
@@ -81,21 +86,11 @@ jobs:
             name=$(basename "$file" .h)
             board=${name#hw_}
 
-            echo "=============================="
+            echo "===================================="
             echo "Building board: $board"
-            echo "=============================="
+            echo "===================================="
 
             make clean
             make $board
 
-            cp build/*.bin ../output/${{ steps.latest.outputs.tag }}/${board}-${{ steps.latest.outputs.tag }}.bin
-          done
-
-      # 9️⃣ Push vers le repo d’archive
-      - name: Push to firmware archive
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          external_repository: Foujiwara/rfp_fw_archive
-          publish_branch: main
-          publish_dir: ./output
-          personal_token: ${{ secrets.ARCHIVE_TOKEN }}
+            cp build/*.bin ../output/${{ steps.latest.outputs.tag }}/${board}-${*
