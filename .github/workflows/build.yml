@@ -1,96 +1,47 @@
-name: Build Custom VESC Firmware
+name: Build VESC Firmware (Official Method)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */6 * * *'
 
 jobs:
   build:
     runs-on: ubuntu-20.04
 
     steps:
-      # 1️⃣ Checkout du repo builder (celui qui contient custom_hwconf)
+      # 1️⃣ Checkout builder (pour hwconf custom)
       - name: Checkout builder repo
         uses: actions/checkout@v3
 
-      # 2️⃣ Détection de la dernière release officielle VESC (release_6_xx)
-      - name: Get latest official VESC release
-        id: latest
-        run: |
-          TAG=$(git ls-remote --tags https://github.com/vedderb/bldc.git \
-            | grep -o 'release_[0-9_]*' \
-            | sort -V \
-            | tail -n1)
-
-          echo "Detected VESC release: $TAG"
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-
-      # 3️⃣ Vérifie si cette version est déjà dans l’archive
-      - name: Check if version already archived
-        id: check
-        run: |
-          git clone https://github.com/Foujiwara/rfp_fw_archive.git archive || true
-
-          if [ -d "archive/${{ steps.latest.outputs.tag }}" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      # 4️⃣ Stop si déjà compilé
-      - name: Stop if already built
-        if: steps.check.outputs.exists == 'true'
-        run: |
-          echo "Firmware already archived, stopping."
-          exit 0
-
-      # 5️⃣ Clone EXACTEMENT la release officielle détectée
+      # 2️⃣ Clone firmware officiel (release FIXE)
       - name: Clone official VESC firmware
         run: |
-          git clone --branch ${{ steps.latest.outputs.tag }} \
-            https://github.com/vedderb/bldc.git official
+          git clone --branch release_6_06 https://github.com/vedderb/bldc.git bldc
 
-      # 6️⃣ PATCH UPSTREAM — correction syntaxe PRIx64 (BUG OFFICIEL)
-      - name: Patch PRIx64 format bug (blackmagic)
-        run: |
-          sed -i 's/"0x%"PRIx64/"0x%" PRIx64/g' official/blackmagic/target/adiv5.c
-
-      # 7️⃣ Injection de tes HW custom
+      # 3️⃣ Inject custom hwconf
       - name: Inject custom hwconf
         run: |
-          cp custom_hwconf/* official/hwconf/
+          cp custom_hwconf/* bldc/hwconf/
 
-      # 8️⃣ Installation de la toolchain ARM compatible VESC
-      - name: Install ARM toolchain
+      # 4️⃣ Install EXACT dependencies (comme recommandé par le projet)
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y \
-            gcc-arm-none-eabi \
-            make \
             git \
-            wget \
+            build-essential \
+            gcc-arm-none-eabi \
             libgl-dev \
-            libxcb-xinerama0
+            libxcb-xinerama0 \
+            wget
 
-      # 9️⃣ Build des HW custom (méthode officielle : make <board>)
-      - name: Build custom hardware
+      # 5️⃣ Build firmware EXACTEMENT comme le projet
+      - name: Build firmware (fw_all)
         run: |
-          mkdir -p output/${{ steps.latest.outputs.tag }}
-          cd official
+          cd bldc
+          make fw_all
 
-          echo "Supported boards:"
-          make
-
-          for file in ../custom_hwconf/hw_*.h; do
-            name=$(basename "$file" .h)
-            board=${name#hw_}
-
-            echo "===================================="
-            echo "Building board: $board"
-            echo "===================================="
-
-            make clean
-            make $board
-
-            cp build/*.bin ../output/${{ steps.latest.outputs.tag }}/${board}-${*
+      # 6️⃣ Collect binaries
+      - name: Collect firmware
+        run: |
+          mkdir -p output
+          find bldc/build -name "*.bin" -exec cp {} output/ \;
