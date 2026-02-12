@@ -45,7 +45,6 @@ jobs:
               ;;
             *)
               echo "ERROR: Invalid UPSTREAM_MODE='$UPSTREAM_MODE'"
-              echo "Allowed: latest | master | release_X_YY"
               exit 1
               ;;
           esac
@@ -61,8 +60,8 @@ jobs:
 
       - name: Clone VESC firmware
         run: |
-          echo "Cloning branch: $TAG"
-          git clone --depth 1 --branch "$TAG" https://github.com/vedderb/bldc.git bldc
+          echo "Cloning branch: ${{ env.TAG }}"
+          git clone --depth 1 --branch "${{ env.TAG }}" https://github.com/vedderb/bldc.git bldc
 
       - name: Install system dependencies
         run: |
@@ -90,6 +89,10 @@ jobs:
           set -e
           source builder.conf
 
+          TAG="${{ env.TAG }}"
+          VERSION="${{ env.VERSION }}"
+          BETA="${{ env.BETA }}"
+
           mkdir -p archive/$TAG
 
           build_one() {
@@ -116,9 +119,7 @@ jobs:
             echo "=============================="
 
             HFILE="bldc/hwconf/hw_${MODEL}.h"
-            if [ -f "$HFILE" ]; then
-              sed -i "s|#define HW_NAME.*|#define HW_NAME \"${FINAL_NAME}\"|g" "$HFILE"
-            fi
+            sed -i "s|#define HW_NAME.*|#define HW_NAME \"${FINAL_NAME}\"|g" "$HFILE"
 
             cd bldc
             make "$TARGET"
@@ -131,8 +132,6 @@ jobs:
 
           if [ "$BUILD_MODE" = "single" ]; then
             hw=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-            [ -z "$hw" ] && echo "HW not found" && exit 1
-
             BRAND=$(basename "$(dirname "$(dirname "$hw")")")
             MODEL_DIR=$(basename "$(dirname "$hw")")
 
