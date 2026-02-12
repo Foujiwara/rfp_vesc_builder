@@ -1,4 +1,4 @@
-name: VESC Firmware Build (single board)
+name: VESC Firmware Build & Archive
 
 on:
   workflow_dispatch:
@@ -8,16 +8,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout de TON repo
       - name: Checkout builder repo
         uses: actions/checkout@v4
 
-      # 2️⃣ Clone EXACT de la release officielle
       - name: Clone official VESC firmware
         run: |
           git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
 
-      # 3️⃣ Dépendances système
       - name: Install system dependencies
         run: |
           sudo apt update
@@ -29,25 +26,30 @@ jobs:
             libgl-dev \
             libxcb-xinerama0
 
-      # 4️⃣ Toolchain officielle VESC
       - name: Install VESC ARM SDK
         run: |
           cd bldc
           make arm_sdk_install
 
-      # 5️⃣ Injection de TES hwconf custom
       - name: Inject custom hwconf
         run: |
           cp custom_hwconf/* bldc/hwconf/
 
-      # 6️⃣ Build d’UNE seule board
-      - name: Build firmware (single board)
+      - name: Build firmware (C350ref)
         run: |
           cd bldc
           make fw_C350ref
 
-      # 7️⃣ Export du .bin
-      - name: Export firmware binary
+      - name: Prepare archive content
         run: |
-          mkdir -p output
-          find bldc/build -name "*C350ref*.bin" -exec cp {} output/ \;
+          mkdir -p archive/release_6_06/C350ref
+          cp bldc/build/C350ref/C350ref.bin \
+             archive/release_6_06/C350ref/C350ref_release_6_06.bin
+
+      - name: Push to firmware archive repo
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          external_repository: Foujiwara/rfp_fw_archive
+          publish_branch: main
+          publish_dir: ./archive
+          personal_token: ${{ secrets.ARCHIVE_TOKEN }}
