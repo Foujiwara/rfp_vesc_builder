@@ -43,6 +43,10 @@ jobs:
           git clone --depth 1 --branch ${{ steps.latest.outputs.tag }} \
           https://github.com/vedderb/bldc.git official
 
+      - name: Patch Blackmagic for GCC 10+
+        run: |
+          sed -i '29i #include <inttypes.h>' bldc/blackmagic/target/adiv5.c
+
       - name: Inject custom hwconf
         run: |
           cp custom_hwconf/* official/hwconf/
