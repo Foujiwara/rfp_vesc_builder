@@ -1,4 +1,4 @@
-name: Build VESC Firmware (Official Method)
+name: Build VESC Firmware (Official + Patch)
 
 on:
   workflow_dispatch:
@@ -8,40 +8,50 @@ jobs:
     runs-on: ubuntu-20.04
 
     steps:
-      # 1️⃣ Checkout builder (pour hwconf custom)
+      # 1️⃣ Checkout de TON repo (celui avec custom_hwconf)
       - name: Checkout builder repo
         uses: actions/checkout@v3
 
-      # 2️⃣ Clone firmware officiel (release FIXE)
+      # 2️⃣ Clone EXACT de la release officielle VESC
       - name: Clone official VESC firmware
         run: |
           git clone --branch release_6_06 https://github.com/vedderb/bldc.git bldc
 
-      # 3️⃣ Inject custom hwconf
+      # 3️⃣ PATCH MINIMAL – correction concaténation PRIx32 / PRIx64
+      # (bug C réel dans le repo officiel)
+      - name: Patch blackmagic PRIx64 format (C standard)
+        run: |
+          sed -i \
+            -e 's/"0x%"PRIx32": 0x%"PRIx64"/"0x%" PRIx32 ": 0x%" PRIx64 "/g' \
+            -e 's/"0x%"PRIx32": %s - Unknown (PIDR = 0x%"PRIx64")/"0x%" PRIx32 ": %s - Unknown (PIDR = 0x%" PRIx64 ")"/g' \
+            bldc/blackmagic/target/adiv5.c
+
+      # 4️⃣ Injection de TES hwconf custom
       - name: Inject custom hwconf
         run: |
           cp custom_hwconf/* bldc/hwconf/
 
-      # 4️⃣ Install EXACT dependencies (comme recommandé par le projet)
-      - name: Install dependencies
+      # 5️⃣ Installation des dépendances EXACTEMENT comme recommandé
+      - name: Install build dependencies
         run: |
           sudo apt update
           sudo apt install -y \
             git \
             build-essential \
             gcc-arm-none-eabi \
+            make \
+            wget \
             libgl-dev \
-            libxcb-xinerama0 \
-            wget
+            libxcb-xinerama0
 
-      # 5️⃣ Build firmware EXACTEMENT comme le projet
-      - name: Build firmware (fw_all)
+      # 6️⃣ BUILD OFFICIEL — même commande que le projet
+      - name: Build firmware (official method)
         run: |
           cd bldc
           make fw_all
 
-      # 6️⃣ Collect binaries
-      - name: Collect firmware
+      # 7️⃣ Récupération des firmwares compilés
+      - name: Collect firmware binaries
         run: |
           mkdir -p output
           find bldc/build -name "*.bin" -exec cp {} output/ \;
