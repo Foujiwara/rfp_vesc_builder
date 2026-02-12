@@ -135,4 +135,3 @@ jobs:
           publish_branch: main
           publish_dir: ./archive
           personal_token: ${{ secrets.ARCHIVE_TOKEN }}
-          enable_jekyll: false
