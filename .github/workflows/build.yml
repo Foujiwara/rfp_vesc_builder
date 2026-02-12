@@ -1,4 +1,4 @@
-name: Build VESC Firmware (Official + Patch)
+name: Build VESC Firmware (Official + inttypes patch)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-20.04
 
     steps:
-      # 1️⃣ Checkout de TON repo (celui avec custom_hwconf)
+      # 1️⃣ Checkout de ton repo (celui avec custom_hwconf)
       - name: Checkout builder repo
         uses: actions/checkout@v3
 
@@ -17,21 +17,18 @@ jobs:
         run: |
           git clone --branch release_6_06 https://github.com/vedderb/bldc.git bldc
 
-      # 3️⃣ PATCH MINIMAL – correction concaténation PRIx32 / PRIx64
-      # (bug C réel dans le repo officiel)
-      - name: Patch blackmagic PRIx64 format (C standard)
+      # 3️⃣ PATCH MINIMAL — ajout de <inttypes.h> (exactement ce que GCC demande)
+      - name: Patch blackmagic PRIx64 include
         run: |
-          sed -i \
-            -e 's/"0x%"PRIx32": 0x%"PRIx64"/"0x%" PRIx32 ": 0x%" PRIx64 "/g' \
-            -e 's/"0x%"PRIx32": %s - Unknown (PIDR = 0x%"PRIx64")/"0x%" PRIx32 ": %s - Unknown (PIDR = 0x%" PRIx64 ")"/g' \
+          sed -i '/#include "exception.h"/a #include <inttypes.h>' \
             bldc/blackmagic/target/adiv5.c
 
-      # 4️⃣ Injection de TES hwconf custom
+      # 4️⃣ Injection de tes hwconf custom
       - name: Inject custom hwconf
         run: |
           cp custom_hwconf/* bldc/hwconf/
 
-      # 5️⃣ Installation des dépendances EXACTEMENT comme recommandé
+      # 5️⃣ Installation des dépendances (méthode officielle recommandée)
       - name: Install build dependencies
         run: |
           sudo apt update
