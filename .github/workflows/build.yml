@@ -36,7 +36,7 @@ jobs:
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      - name: Build firmware (all or single)
+      - name: Build firmware (configurable)
         run: |
           set -e
 
@@ -45,6 +45,9 @@ jobs:
           # ==============================
           BUILD_MODE="all"        # all | single
           SINGLE_MODEL="C350V3"  # used only if BUILD_MODE=single
+
+          BUILD_NO_LIMITS="yes"  # yes | no
+          PREFIX_RFP="yes"       # yes | no
 
           VERSION="V6.06"
           TAG="release_6_06"
@@ -56,35 +59,49 @@ jobs:
             MODEL_TECH="$1"
             BRAND_DIR="$2"
             MODEL_DIR="$3"
+            VARIANT="$4"   # "" or "_no_limits"
 
-            echo "=============================="
-            echo "Building $BRAND_DIR / $MODEL_DIR (fw_$MODEL_TECH)"
-            echo "=============================="
+            TARGET="fw_${MODEL_TECH}${VARIANT}"
+
+            echo "------------------------------"
+            echo "Building $TARGET"
+            echo "------------------------------"
 
             cd bldc
-            make fw_$MODEL_TECH
+            if make -n "$TARGET" >/dev/null 2>&1; then
+              make "$TARGET"
+            else
+              echo "Target $TARGET does not exist, skipping."
+              cd ..
+              return
+            fi
             cd ..
+
+            NAME_PREFIX=""
+            [ "$PREFIX_RFP" = "yes" ] && NAME_PREFIX="RFP_"
+
+            VARIANT_NAME=""
+            [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
 
             mkdir -p "archive/$TAG/$BRAND_DIR/$MODEL_DIR"
 
-            cp "bldc/build/$MODEL_TECH/$MODEL_TECH.bin" \
-               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${MODEL_TECH}_${VERSION}_RFP.bin"
+            cp "bldc/build/${MODEL_TECH}${VARIANT}/${MODEL_TECH}${VARIANT}.bin" \
+               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${NAME_PREFIX}${MODEL_TECH}${VARIANT_NAME}_${VERSION}.bin"
           }
 
           if [ "$BUILD_MODE" = "single" ]; then
             echo ">>> SINGLE BUILD MODE: $SINGLE_MODEL"
 
             hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-
-            if [ -z "$hwfile" ]; then
-              echo "ERROR: hw_${SINGLE_MODEL}.h not found"
-              exit 1
-            fi
+            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
 
             MODEL_DIR=$(basename "$(dirname "$hwfile")")
             BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR"
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+
+            [ "$BUILD_NO_LIMITS" = "yes" ] && \
+              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
 
           else
             echo ">>> FULL BUILD MODE"
@@ -96,7 +113,10 @@ jobs:
               MODEL_DIR=$(basename "$(dirname "$hwfile")")
               BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR"
+              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" ""
+
+              [ "$BUILD_NO_LIMITS" = "yes" ] && \
+                build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
             done
           fi
 
