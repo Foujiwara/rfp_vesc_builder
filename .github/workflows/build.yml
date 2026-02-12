@@ -1,4 +1,4 @@
-name: VESC Firmware Build (Official Method)
+name: VESC Firmware Build (Official all_fw)
 
 on:
   workflow_dispatch:
@@ -42,11 +42,11 @@ jobs:
         run: |
           cp custom_hwconf/* bldc/hwconf/
 
-      # 6️⃣ Build firmware – méthode OFFICIELLE
-      - name: Build firmware
+      # 6️⃣ BUILD OFFICIEL — toutes les boards
+      - name: Build firmware (all_fw)
         run: |
           cd bldc
-          make
+          make all_fw
 
       # 7️⃣ Collecte des binaires
       - name: Collect firmware binaries
