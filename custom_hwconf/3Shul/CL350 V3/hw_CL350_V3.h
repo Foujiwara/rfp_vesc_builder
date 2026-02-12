@@ -1,6 +1,6 @@
 
 
-#define HW_NAME					"CL350"
+#define HW_NAME					"CL350_V3"
 
 
 // HW properties
