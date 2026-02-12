@@ -1,14 +1,28 @@
-      - name: Resolve upstream version (FIXED)
+name: RFP VESC Firmware Builder
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
+
+      - name: Resolve upstream version
         run: |
           set -e
-          source builder.conf
 
-          echo "UPSTREAM_MODE='$UPSTREAM_MODE'"
+          # ===== USER CONFIG =====
+          # possible values:
+          #   latest
+          #   release_6_06
+          #   master
+          UPSTREAM_MODE="latest"
 
-          if [ -z "$UPSTREAM_MODE" ]; then
-            echo "ERROR: UPSTREAM_MODE is EMPTY"
-            exit 1
-          fi
+          echo "UPSTREAM_MODE=$UPSTREAM_MODE"
 
           if [ "$UPSTREAM_MODE" = "latest" ]; then
             TAG=$(git ls-remote --heads https://github.com/vedderb/bldc.git \
@@ -18,7 +32,7 @@
               | tail -n1)
 
             if [ -z "$TAG" ]; then
-              echo "ERROR: No release_* branch found upstream"
+              echo "ERROR: no release branch found"
               exit 1
             fi
 
@@ -36,7 +50,7 @@
             BETA="no"
 
           else
-            echo "ERROR: Invalid UPSTREAM_MODE='$UPSTREAM_MODE'"
+            echo "ERROR: invalid UPSTREAM_MODE"
             exit 1
           fi
 
@@ -48,3 +62,43 @@
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "BETA=$BETA" >> $GITHUB_ENV
+
+      - name: Clone VESC firmware
+        run: |
+          echo "Cloning branch: $TAG"
+          git clone --depth 1 --branch "$TAG" https://github.com/vedderb/bldc.git bldc
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential git wget libgl-dev libxcb-xinerama0
+
+      - name: Install ARM GCC (official VESC way)
+        run: |
+          cd bldc
+          make arm_sdk_install
+
+      - name: Inject custom HW configuration
+        run: |
+          cp custom_hwconf/C350ref/* bldc/hwconf/
+
+      - name: Build ONE hardware (TEST)
+        run: |
+          set -e
+          cd bldc
+
+          HW="C350ref"
+
+          make fw_$HW
+
+          mkdir -p ../output/$HW
+          cp build/$HW/$HW.bin ../output/$HW/RFP_${HW}_${VERSION}.bin
+
+      - name: Push firmware to archive repo
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          external_repository: Foujiwara/rfp_fw_archive
+          publish_branch: main
+          publish_dir: ./output
+          personal_token: ${{ secrets.ARCHIVE_TOKEN }}
+          keep_files: true
