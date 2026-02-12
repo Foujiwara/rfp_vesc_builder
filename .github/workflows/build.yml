@@ -122,7 +122,7 @@ jobs:
               [ "$BUILD_NO_LIMITS" = "yes" ] && \
                 build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
             done
-          fi     
+          fi
 
       - name: Ensure no .nojekyll
         run: |
