@@ -1,4 +1,4 @@
-name: VESC Firmware Build (Official all_fw)
+name: VESC Firmware Build (single board)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout de TON repo (custom_hwconf)
+      # 1️⃣ Checkout de TON repo
       - name: Checkout builder repo
         uses: actions/checkout@v4
 
@@ -16,10 +16,8 @@ jobs:
       - name: Clone official VESC firmware
         run: |
           git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
-          cd bldc
-          git describe --tags || true
 
-      # 3️⃣ Dépendances système minimales
+      # 3️⃣ Dépendances système
       - name: Install system dependencies
         run: |
           sudo apt update
@@ -31,8 +29,8 @@ jobs:
             libgl-dev \
             libxcb-xinerama0
 
-      # 4️⃣ Installation OFFICIELLE de la toolchain ARM (VESC)
-      - name: Install VESC ARM SDK (official)
+      # 4️⃣ Toolchain officielle VESC
+      - name: Install VESC ARM SDK
         run: |
           cd bldc
           make arm_sdk_install
@@ -42,14 +40,14 @@ jobs:
         run: |
           cp custom_hwconf/* bldc/hwconf/
 
-      # 6️⃣ BUILD OFFICIEL — toutes les boards
-      - name: Build firmware (all_fw)
+      # 6️⃣ Build d’UNE seule board
+      - name: Build firmware (single board)
         run: |
           cd bldc
-          make all_fw
+          make fw_C350ref
 
-      # 7️⃣ Collecte des binaires
-      - name: Collect firmware binaries
+      # 7️⃣ Export du .bin
+      - name: Export firmware binary
         run: |
           mkdir -p output
-          find bldc/build -name "*.bin" -exec cp {} output/ \;
+          find bldc/build -name "*C350ref*.bin" -exec cp {} output/ \;
