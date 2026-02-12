@@ -1,6 +1,6 @@
 
 
-#define HW_NAME					"C350 RAGE MECHANICS 6.2"
+#define HW_NAME					"C350_V3 RAGE"
 
 
 // HW properties
