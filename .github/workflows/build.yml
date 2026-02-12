@@ -1,4 +1,4 @@
-name: Build VESC Firmware (Official + inttypes patch)
+name: Build VESC Firmware (OFFICIAL SCRIPT)
 
 on:
   workflow_dispatch:
@@ -8,28 +8,22 @@ jobs:
     runs-on: ubuntu-20.04
 
     steps:
-      # 1️⃣ Checkout de ton repo (celui avec custom_hwconf)
+      # 1️⃣ Checkout de ton repo (hwconf custom)
       - name: Checkout builder repo
         uses: actions/checkout@v3
 
-      # 2️⃣ Clone EXACT de la release officielle VESC
+      # 2️⃣ Clone EXACT de la release officielle
       - name: Clone official VESC firmware
         run: |
           git clone --branch release_6_06 https://github.com/vedderb/bldc.git bldc
 
-      # 3️⃣ PATCH MINIMAL — ajout de <inttypes.h> (exactement ce que GCC demande)
-      - name: Patch blackmagic PRIx64 include
-        run: |
-          sed -i '/#include "exception.h"/a #include <inttypes.h>' \
-            bldc/blackmagic/target/adiv5.c
-
-      # 4️⃣ Injection de tes hwconf custom
+      # 3️⃣ Injection de tes hwconf custom
       - name: Inject custom hwconf
         run: |
           cp custom_hwconf/* bldc/hwconf/
 
-      # 5️⃣ Installation des dépendances (méthode officielle recommandée)
-      - name: Install build dependencies
+      # 4️⃣ Dépendances EXACTES recommandées
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y \
@@ -41,14 +35,15 @@ jobs:
             libgl-dev \
             libxcb-xinerama0
 
-      # 6️⃣ BUILD OFFICIEL — même commande que le projet
-      - name: Build firmware (official method)
+      # 5️⃣ BUILD — SCRIPT OFFICIEL DE RELEASE
+      - name: Build firmware (official release script)
         run: |
           cd bldc
-          make fw_all
+          chmod +x build_all.sh
+          ./build_all.sh
 
-      # 7️⃣ Récupération des firmwares compilés
+      # 6️⃣ Collecte des binaires
       - name: Collect firmware binaries
         run: |
           mkdir -p output
-          find bldc/build -name "*.bin" -exec cp {} output/ \;
+          find bldc -name "*.bin" -exec cp {} output/ \;
