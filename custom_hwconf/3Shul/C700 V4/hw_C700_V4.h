@@ -7,7 +7,7 @@
 #define HW_NAME					"Hesc 144/450 v2 "
 #endif
 #ifdef Mosfet150
-#define HW_NAME					"C700 v4 "
+#define HW_NAME					"C700_V4 "
 #endif
 
 // HW properties
