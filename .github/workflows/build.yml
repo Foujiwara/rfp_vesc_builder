@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Multi HW Archive (SAFE)
+name: VESC Firmware Builder – Multi HW Archive
 
 on:
   workflow_dispatch:
@@ -31,14 +31,12 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # Injection de tous les hwconf
-      - name: Inject custom hwconf
+      - name: Inject all custom hwconf
         run: |
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # Build sécurisé basé sur hw_*.h
-      - name: Build all custom HW (no clean, no spaces)
+      - name: Build all custom hardware
         run: |
           set -e
           VERSION="V6.06"
@@ -47,23 +45,24 @@ jobs:
           mkdir -p archive/$TAG
 
           find custom_hwconf -name "hw_*.h" | while read hwfile; do
-            MODEL=$(basename "$hwfile" .h)
-            MODEL=${MODEL#hw_}
+            MODEL_TECH=$(basename "$hwfile" .h)
+            MODEL_TECH=${MODEL_TECH#hw_}
 
-            BRAND=$(basename "$(dirname "$(dirname "$hwfile")")")
+            MODEL_DIR=$(basename "$(dirname "$hwfile")")
+            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
             echo "=============================="
-            echo "Building $BRAND / $MODEL"
+            echo "Building $BRAND_DIR / $MODEL_DIR (fw_$MODEL_TECH)"
             echo "=============================="
 
             cd bldc
-            make fw_$MODEL
+            make fw_$MODEL_TECH
             cd ..
 
-            mkdir -p archive/$TAG/$BRAND/$MODEL
+            mkdir -p "archive/$TAG/$BRAND_DIR/$MODEL_DIR"
 
-            cp bldc/build/$MODEL/$MODEL.bin \
-               archive/$TAG/$BRAND/$MODEL/${MODEL}_${VERSION}_RFP.bin
+            cp "bldc/build/$MODEL_TECH/$MODEL_TECH.bin" \
+               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${MODEL_TECH}_${VERSION}_RFP.bin"
           done
 
       - name: Ensure no .nojekyll
