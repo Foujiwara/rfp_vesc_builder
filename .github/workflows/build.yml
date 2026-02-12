@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Multi HW Archive
+name: VESC Firmware Builder – RFP
 
 on:
   workflow_dispatch:
@@ -19,12 +19,39 @@ jobs:
           fi
           cat builder.conf
 
-      - name: Clone official VESC firmware
+      - name: Resolve upstream version
+        id: upstream
         run: |
           source builder.conf
+
+          if [ "$UPSTREAM_MODE" = "latest" ]; then
+            TAG=$(git ls-remote --tags https://github.com/vedderb/bldc.git \
+              | grep -o 'release_[0-9]\+_[0-9]\+' \
+              | sort -V \
+              | tail -n1)
+            VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
+            BETA="no"
+
+          elif [ "$UPSTREAM_MODE" = "master" ]; then
+            TAG="master"
+            VERSION="MASTER"
+            BETA="yes"
+
+          else
+            TAG="$UPSTREAM_MODE"
+            VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
+            BETA="no"
+          fi
+
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "BETA=$BETA" >> $GITHUB_ENV
+
+      - name: Clone official VESC firmware
+        run: |
           git clone --depth 1 --branch "$TAG" https://github.com/vedderb/bldc.git bldc
 
-      - name: Install system dependencies
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y \
@@ -35,100 +62,73 @@ jobs:
             libgl-dev \
             libxcb-xinerama0
 
-      - name: Install VESC ARM SDK (official)
+      - name: Install ARM SDK (official VESC)
         run: |
           cd bldc
           make arm_sdk_install
 
-      - name: Inject all custom hwconf
+      - name: Inject custom hwconf
         run: |
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      - name: Build firmware (config driven)
+      - name: Build firmware
         run: |
           set -e
           source builder.conf
 
-          # Extract version from tag: release_6_06 → 6.06
-          VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-
           mkdir -p archive/$TAG
 
           build_one() {
-            MODEL_TECH="$1"
-            BRAND_DIR="$2"
+            MODEL="$1"
+            BRAND="$2"
             MODEL_DIR="$3"
-            VARIANT="$4"   # "" or "_no_limits"
+            VARIANT="$4"
 
-            TARGET="fw_${MODEL_TECH}${VARIANT}"
+            TARGET="fw_${MODEL}${VARIANT}"
 
-            NAME_PREFIX=""
-            [ "$PREFIX_RFP" = "yes" ] && NAME_PREFIX="RFP_"
+            PREFIX=""
+            [ "$PREFIX_RFP" = "yes" ] && PREFIX="RFP_"
 
             VARIANT_NAME=""
             [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
 
-            FINAL_NAME="${NAME_PREFIX}${MODEL_TECH}${VARIANT_NAME}_${VERSION}"
+            BETA_SUFFIX=""
+            [ "$BETA" = "yes" ] && BETA_SUFFIX="_BETA"
 
-            echo "------------------------------"
-            echo "Building $TARGET → $FINAL_NAME"
-            echo "------------------------------"
+            FINAL_NAME="${PREFIX}${MODEL}${VARIANT_NAME}_${VERSION}${BETA_SUFFIX}"
 
-            # Patch HW_NAME dynamically
-            HFILE="bldc/hwconf/hw_${MODEL_TECH}.h"
-            if [ -f "$HFILE" ]; then
-              sed -i "s|#define HW_NAME.*|#define HW_NAME \"${FINAL_NAME}\"|g" "$HFILE"
-            fi
+            HFILE="bldc/hwconf/hw_${MODEL}.h"
+            sed -i "s|#define HW_NAME.*|#define HW_NAME \"${FINAL_NAME}\"|g" "$HFILE"
 
             cd bldc
-            if make -n "$TARGET" >/dev/null 2>&1; then
-              make "$TARGET"
-            else
-              echo "Target $TARGET does not exist, skipping."
-              cd ..
-              return
-            fi
+            make "$TARGET"
             cd ..
 
-            mkdir -p "archive/$TAG/$BRAND_DIR/$MODEL_DIR"
-
-            cp "bldc/build/${MODEL_TECH}${VARIANT}/${MODEL_TECH}${VARIANT}.bin" \
-               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${FINAL_NAME}.bin"
+            mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
+            cp "bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin" \
+               "archive/$TAG/$BRAND/$MODEL_DIR/${FINAL_NAME}.bin"
           }
 
           if [ "$BUILD_MODE" = "single" ]; then
-            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
+            hw=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
+            BRAND=$(basename "$(dirname "$(dirname "$hw")")")
+            MODEL_DIR=$(basename "$(dirname "$hw")")
 
-            MODEL_DIR=$(basename "$(dirname "$hwfile")")
-            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
-
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
-
-            [ "$BUILD_NO_LIMITS" = "yes" ] && \
-              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
-
+            build_one "$SINGLE_MODEL" "$BRAND" "$MODEL_DIR" ""
+            [ "$BUILD_NO_LIMITS" = "yes" ] && build_one "$SINGLE_MODEL" "$BRAND" "$MODEL_DIR" "_no_limits"
           else
-            find custom_hwconf -name "hw_*.h" | while read hwfile; do
-              MODEL_TECH=$(basename "$hwfile" .h)
-              MODEL_TECH=${MODEL_TECH#hw_}
+            find custom_hwconf -name "hw_*.h" | while read hw; do
+              MODEL=$(basename "$hw" .h | sed 's/^hw_//')
+              BRAND=$(basename "$(dirname "$(dirname "$hw")")")
+              MODEL_DIR=$(basename "$(dirname "$hw")")
 
-              MODEL_DIR=$(basename "$(dirname "$hwfile")")
-              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
-
-              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" ""
-
-              [ "$BUILD_NO_LIMITS" = "yes" ] && \
-                build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+              build_one "$MODEL" "$BRAND" "$MODEL_DIR" ""
+              [ "$BUILD_NO_LIMITS" = "yes" ] && build_one "$MODEL" "$BRAND" "$MODEL_DIR" "_no_limits"
             done
           fi
 
-      - name: Ensure no .nojekyll
-        run: |
-          rm -f archive/.nojekyll
-
-      - name: Push to firmware archive repo
+      - name: Push to archive repo
         uses: peaceiris/actions-gh-pages@v3
         with:
           external_repository: Foujiwara/rfp_fw_archive
