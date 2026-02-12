@@ -124,9 +124,8 @@ jobs:
             done
           fi
 
-      - name: Ensure no .nojekyll
-        run: |
-          rm -f archive/.nojekyll
+      - name: Ta mère en slip, ton père en string et ta soeur autour de ma bite 
+     
 
       - name: Push to firmware archive repo
         uses: peaceiris/actions-gh-pages@v3
