@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – RFP
+name: RFP VESC Firmware Builder
 
 on:
   workflow_dispatch:
@@ -11,47 +11,60 @@ jobs:
       - name: Checkout builder repo
         uses: actions/checkout@v4
 
-      - name: Load builder configuration
+      - name: Load configuration
         run: |
           if [ ! -f builder.conf ]; then
-            echo "ERROR: builder.conf not found"
+            echo "ERROR: builder.conf missing"
             exit 1
           fi
           cat builder.conf
 
       - name: Resolve upstream version
-        id: upstream
         run: |
+          set -e
           source builder.conf
 
-          if [ "$UPSTREAM_MODE" = "latest" ]; then
-            TAG=$(git ls-remote --tags https://github.com/vedderb/bldc.git \
-              | grep -o 'release_[0-9]\+_[0-9]\+' \
-              | sort -V \
-              | tail -n1)
-            VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-            BETA="no"
+          case "$UPSTREAM_MODE" in
+            latest)
+              TAG=$(git ls-remote --tags https://github.com/vedderb/bldc.git \
+                | grep -o 'release_[0-9]\+_[0-9]\+' \
+                | sort -V \
+                | tail -n1)
+              VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
+              BETA="no"
+              ;;
+            master)
+              TAG="master"
+              VERSION="MASTER"
+              BETA="yes"
+              ;;
+            release_*)
+              TAG="$UPSTREAM_MODE"
+              VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
+              BETA="no"
+              ;;
+            *)
+              echo "ERROR: Invalid UPSTREAM_MODE='$UPSTREAM_MODE'"
+              echo "Allowed: latest | master | release_X_YY"
+              exit 1
+              ;;
+          esac
 
-          elif [ "$UPSTREAM_MODE" = "master" ]; then
-            TAG="master"
-            VERSION="MASTER"
-            BETA="yes"
-
-          else
-            TAG="$UPSTREAM_MODE"
-            VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-            BETA="no"
-          fi
+          echo "Resolved upstream:"
+          echo "TAG=$TAG"
+          echo "VERSION=$VERSION"
+          echo "BETA=$BETA"
 
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "BETA=$BETA" >> $GITHUB_ENV
 
-      - name: Clone official VESC firmware
+      - name: Clone VESC firmware
         run: |
+          echo "Cloning branch: $TAG"
           git clone --depth 1 --branch "$TAG" https://github.com/vedderb/bldc.git bldc
 
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
           sudo apt update
           sudo apt install -y \
@@ -98,8 +111,14 @@ jobs:
 
             FINAL_NAME="${PREFIX}${MODEL}${VARIANT_NAME}_${VERSION}${BETA_SUFFIX}"
 
+            echo "=============================="
+            echo "Building $TARGET → $FINAL_NAME"
+            echo "=============================="
+
             HFILE="bldc/hwconf/hw_${MODEL}.h"
-            sed -i "s|#define HW_NAME.*|#define HW_NAME \"${FINAL_NAME}\"|g" "$HFILE"
+            if [ -f "$HFILE" ]; then
+              sed -i "s|#define HW_NAME.*|#define HW_NAME \"${FINAL_NAME}\"|g" "$HFILE"
+            fi
 
             cd bldc
             make "$TARGET"
@@ -112,11 +131,14 @@ jobs:
 
           if [ "$BUILD_MODE" = "single" ]; then
             hw=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
+            [ -z "$hw" ] && echo "HW not found" && exit 1
+
             BRAND=$(basename "$(dirname "$(dirname "$hw")")")
             MODEL_DIR=$(basename "$(dirname "$hw")")
 
             build_one "$SINGLE_MODEL" "$BRAND" "$MODEL_DIR" ""
-            [ "$BUILD_NO_LIMITS" = "yes" ] && build_one "$SINGLE_MODEL" "$BRAND" "$MODEL_DIR" "_no_limits"
+            [ "$BUILD_NO_LIMITS" = "yes" ] && \
+              build_one "$SINGLE_MODEL" "$BRAND" "$MODEL_DIR" "_no_limits"
           else
             find custom_hwconf -name "hw_*.h" | while read hw; do
               MODEL=$(basename "$hw" .h | sed 's/^hw_//')
@@ -124,11 +146,12 @@ jobs:
               MODEL_DIR=$(basename "$(dirname "$hw")")
 
               build_one "$MODEL" "$BRAND" "$MODEL_DIR" ""
-              [ "$BUILD_NO_LIMITS" = "yes" ] && build_one "$MODEL" "$BRAND" "$MODEL_DIR" "_no_limits"
+              [ "$BUILD_NO_LIMITS" = "yes" ] && \
+                build_one "$MODEL" "$BRAND" "$MODEL_DIR" "_no_limits"
             done
           fi
 
-      - name: Push to archive repo
+      - name: Push to firmware archive
         uses: peaceiris/actions-gh-pages@v3
         with:
           external_repository: Foujiwara/rfp_fw_archive
