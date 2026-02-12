@@ -43,6 +43,11 @@ jobs:
           git clone --depth 1 --branch ${{ steps.latest.outputs.tag }} \
           https://github.com/vedderb/bldc.git official
 
+       - name: Disable Blackmagic (not needed for firmware)
+        run: |
+          rm -rf official/blackmagic
+
+
       - name: Patch Blackmagic for GCC 10+
         run: |
           sed -i '/#include "exception.h"/a #include <inttypes.h>' bldc/blackmagic/target/adiv5.c
