@@ -13,14 +13,17 @@ jobs:
       - name: Checkout builder repo
         uses: actions/checkout@v3
 
-      - name: Get latest official tag
+      - name: Get latest release_6 tag
         id: latest
         run: |
           TAG=$(git ls-remote --tags https://github.com/vedderb/bldc.git \
-          | grep -o 'v[0-9].*' \
+          | grep -o 'release_[0-9_]*' \
           | sort -V \
           | tail -n1)
+
+          echo "Latest tag is $TAG"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+
 
       - name: Check if already built
         id: check
