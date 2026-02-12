@@ -1,37 +1,6 @@
-name: RFP VESC Firmware Builder (DEBUG SAFE)
-
-on:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout builder repo
-        uses: actions/checkout@v4
-
-      - name: DEBUG – show workspace
-        run: |
-          echo "=== WORKSPACE ==="
-          pwd
-          ls -la
-          echo "================="
-
-      - name: DEBUG – load builder.conf
-        run: |
-          echo "=== builder.conf ==="
-          if [ ! -f builder.conf ]; then
-            echo "ERROR: builder.conf NOT FOUND"
-            exit 1
-          fi
-          cat builder.conf
-          echo "===================="
-
-      - name: Resolve upstream version (DEBUG SAFE)
+      - name: Resolve upstream version (FIXED)
         run: |
           set -e
-
           source builder.conf
 
           echo "UPSTREAM_MODE='$UPSTREAM_MODE'"
@@ -41,139 +10,41 @@ jobs:
             exit 1
           fi
 
-          case "$UPSTREAM_MODE" in
-            latest)
-              TAG=$(git ls-remote --tags https://github.com/vedderb/bldc.git \
-                | grep -o 'release_[0-9]\+_[0-9]\+' \
-                | sort -V \
-                | tail -n1)
-              VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-              BETA="no"
-              ;;
-            master)
-              TAG="master"
-              VERSION="MASTER"
-              BETA="yes"
-              ;;
-            release_*)
-              TAG="$UPSTREAM_MODE"
-              VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-              BETA="no"
-              ;;
-            *)
-              echo "ERROR: Invalid UPSTREAM_MODE='$UPSTREAM_MODE'"
-              exit 1
-              ;;
-          esac
+          if [ "$UPSTREAM_MODE" = "latest" ]; then
+            TAG=$(git ls-remote --heads https://github.com/vedderb/bldc.git \
+              | grep 'refs/heads/release_' \
+              | sed 's|.*refs/heads/||' \
+              | sort -V \
+              | tail -n1)
 
-          if [ -z "$TAG" ]; then
-            echo "ERROR: TAG is EMPTY after resolution"
+            if [ -z "$TAG" ]; then
+              echo "ERROR: No release_* branch found upstream"
+              exit 1
+            fi
+
+            VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
+            BETA="no"
+
+          elif [ "$UPSTREAM_MODE" = "master" ]; then
+            TAG="master"
+            VERSION="MASTER"
+            BETA="yes"
+
+          elif [[ "$UPSTREAM_MODE" == release_* ]]; then
+            TAG="$UPSTREAM_MODE"
+            VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
+            BETA="no"
+
+          else
+            echo "ERROR: Invalid UPSTREAM_MODE='$UPSTREAM_MODE'"
             exit 1
           fi
 
-          echo "RESOLVED:"
-          echo "TAG='$TAG'"
-          echo "VERSION='$VERSION'"
-          echo "BETA='$BETA'"
+          echo "Resolved upstream:"
+          echo "TAG=$TAG"
+          echo "VERSION=$VERSION"
+          echo "BETA=$BETA"
 
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "BETA=$BETA" >> $GITHUB_ENV
-
-      - name: DEBUG – show resolved env
-        run: |
-          echo "ENV.TAG='${{ env.TAG }}'"
-          echo "ENV.VERSION='${{ env.VERSION }}'"
-          echo "ENV.BETA='${{ env.BETA }}'"
-
-      - name: Clone VESC firmware
-        run: |
-          echo "Cloning upstream branch: '${{ env.TAG }}'"
-          git clone --depth 1 --branch "${{ env.TAG }}" https://github.com/vedderb/bldc.git bldc
-
-      - name: Install system dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y \
-            build-essential \
-            git \
-            make \
-            wget \
-            libgl-dev \
-            libxcb-xinerama0
-
-      - name: Install ARM SDK (official VESC)
-        run: |
-          cd bldc
-          make arm_sdk_install
-
-      - name: Inject custom hwconf
-        run: |
-          find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
-            -exec cp {} bldc/hwconf/ \;
-
-      - name: Build firmware
-        run: |
-          set -e
-          source builder.conf
-
-          TAG="${{ env.TAG }}"
-          VERSION="${{ env.VERSION }}"
-          BETA="${{ env.BETA }}"
-
-          mkdir -p archive/$TAG
-
-          build_one() {
-            MODEL="$1"
-            BRAND="$2"
-            MODEL_DIR="$3"
-            VARIANT="$4"
-
-            TARGET="fw_${MODEL}${VARIANT}"
-
-            PREFIX=""
-            [ "$PREFIX_RFP" = "yes" ] && PREFIX="RFP_"
-
-            VARIANT_NAME=""
-            [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
-
-            BETA_SUFFIX=""
-            [ "$BETA" = "yes" ] && BETA_SUFFIX="_BETA"
-
-            FINAL_NAME="${PREFIX}${MODEL}${VARIANT_NAME}_${VERSION}${BETA_SUFFIX}"
-
-            echo "=============================="
-            echo "Building $TARGET → $FINAL_NAME"
-            echo "=============================="
-
-            HFILE="bldc/hwconf/hw_${MODEL}.h"
-            sed -i "s|#define HW_NAME.*|#define HW_NAME \"${FINAL_NAME}\"|g" "$HFILE"
-
-            cd bldc
-            make "$TARGET"
-            cd ..
-
-            mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
-            cp "bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin" \
-               "archive/$TAG/$BRAND/$MODEL_DIR/${FINAL_NAME}.bin"
-          }
-
-          if [ "$BUILD_MODE" = "single" ]; then
-            hw=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-            BRAND=$(basename "$(dirname "$(dirname "$hw")")")
-            MODEL_DIR=$(basename "$(dirname "$hw")")
-
-            build_one "$SINGLE_MODEL" "$BRAND" "$MODEL_DIR" ""
-            [ "$BUILD_NO_LIMITS" = "yes" ] && \
-              build_one "$SINGLE_MODEL" "$BRAND" "$MODEL_DIR" "_no_limits"
-          else
-            find custom_hwconf -name "hw_*.h" | while read hw; do
-              MODEL=$(basename "$hw" .h | sed 's/^hw_//')
-              BRAND=$(basename "$(dirname "$(dirname "$hw")")")
-              MODEL_DIR=$(basename "$(dirname "$hw")")
-
-              build_one "$MODEL" "$BRAND" "$MODEL_DIR" ""
-              [ "$BUILD_NO_LIMITS" = "yes" ] && \
-                build_one "$MODEL" "$BRAND" "$MODEL_DIR" "_no_limits"
-            done
-          fi
