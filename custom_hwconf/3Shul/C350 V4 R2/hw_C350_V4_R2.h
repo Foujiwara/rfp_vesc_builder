@@ -1,6 +1,6 @@
 
 
-#define HW_NAME					"C350 V4 r2"
+#define HW_NAME					"C350_V4_R2"
 
 
 // HW properties
