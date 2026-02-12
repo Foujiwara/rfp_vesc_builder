@@ -1,4 +1,4 @@
-name: RFP VESC Firmware Builder
+name: VESC Firmware Builder – Multi HW Archive
 
 on:
   workflow_dispatch:
@@ -11,147 +11,128 @@ jobs:
       - name: Checkout builder repo
         uses: actions/checkout@v4
 
-      # ======================================================
-      # LOAD CONFIG (SOURCE OF TRUTH)
-      # ======================================================
       - name: Load builder configuration
         run: |
-          set -e
-          source builder.conf
-
-          for v in UPSTREAM_MODE BUILD_MODE SINGLE_MODEL HW_TARGET BUILD_NO_LIMITS PREFIX_RFP; do
-            if [ -z "${!v}" ]; then
-              echo "ERROR: $v is not defined in builder.conf"
-              exit 1
-            fi
-          done
-
-          echo "UPSTREAM_MODE=$UPSTREAM_MODE" >> $GITHUB_ENV
-          echo "BUILD_MODE=$BUILD_MODE" >> $GITHUB_ENV
-          echo "SINGLE_MODEL=$SINGLE_MODEL" >> $GITHUB_ENV
-          echo "HW_TARGET=$HW_TARGET" >> $GITHUB_ENV
-          echo "BUILD_NO_LIMITS=$BUILD_NO_LIMITS" >> $GITHUB_ENV
-          echo "PREFIX_RFP=$PREFIX_RFP" >> $GITHUB_ENV
-
-      # ======================================================
-      # RESOLVE UPSTREAM (RELEASE BRANCHES)
-      # ======================================================
-      - name: Resolve upstream
-        run: |
-          set -e
-
-          case "$UPSTREAM_MODE" in
-            latest)
-              TAG=$(git ls-remote --heads https://github.com/vedderb/bldc.git \
-                | grep 'refs/heads/release_' \
-                | sed 's|.*refs/heads/||' \
-                | sort -V \
-                | tail -n1)
-              VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-              IS_BETA="no"
-              ;;
-            master)
-              TAG="master"
-              VERSION="master"
-              IS_BETA="yes"
-              ;;
-            release_*)
-              TAG="$UPSTREAM_MODE"
-              VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-              IS_BETA="no"
-              ;;
-            *)
-              echo "ERROR: invalid UPSTREAM_MODE"
-              exit 1
-              ;;
-          esac
-
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "IS_BETA=$IS_BETA" >> $GITHUB_ENV
-
-      # ======================================================
-      # CLONE UPSTREAM (PURE)
-      # ======================================================
-      - name: Clone VESC firmware
-        run: |
-          git clone --depth 1 --branch "$TAG" https://github.com/vedderb/bldc.git bldc
-
-      # ======================================================
-      # INJECT CUSTOM HW CONFIG (RFP)
-      # ======================================================
-      - name: Inject custom HW configurations
-        run: |
-          set -e
-
-          if [ ! -d "custom_hwconf/$HW_TARGET" ]; then
-            echo "ERROR: custom_hwconf/$HW_TARGET not found"
+          if [ ! -f builder.conf ]; then
+            echo "ERROR: builder.conf not found"
             exit 1
           fi
+          cat builder.conf
 
-          echo "Injecting HW config: $HW_TARGET"
-          cp custom_hwconf/$HW_TARGET/*.c bldc/hwconf/
-          cp custom_hwconf/$HW_TARGET/*.h bldc/hwconf/
+      - name: Clone official VESC firmware
+        run: |
+          source builder.conf
+          git clone --depth 1 --branch "$TAG" https://github.com/vedderb/bldc.git bldc
 
-      # ======================================================
-      # OFFICIAL VESC BUILD FLOW (UNCHANGED)
-      # ======================================================
-      - name: Install build dependencies
+      - name: Install system dependencies
         run: |
           sudo apt update
-          sudo apt install -y build-essential git wget libgl-dev libxcb-xinerama0
+          sudo apt install -y \
+            build-essential \
+            git \
+            make \
+            wget \
+            libgl-dev \
+            libxcb-xinerama0
 
-      - name: Install ARM SDK (official)
+      - name: Install VESC ARM SDK (official)
         run: |
           cd bldc
           make arm_sdk_install
 
-      # ======================================================
-      # BUILD
-      # ======================================================
-      - name: Build firmware
+      - name: Inject all custom hwconf
+        run: |
+          find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
+            -exec cp {} bldc/hwconf/ \;
+
+      - name: Build firmware (config driven)
         run: |
           set -e
-          cd bldc
-          mkdir -p ../output
+          source builder.conf
+
+          # Extract version from tag: release_6_06 → 6.06
+          VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
+
+          mkdir -p archive/$TAG
 
           build_one() {
-            TARGET="$1"
-            NAME="$2"
+            MODEL_TECH="$1"
+            BRAND_DIR="$2"
+            MODEL_DIR="$3"
+            VARIANT="$4"   # "" or "_no_limits"
 
-            echo "=============================="
-            echo "Building $TARGET → $NAME"
-            echo "=============================="
+            TARGET="fw_${MODEL_TECH}${VARIANT}"
 
-            make fw_$TARGET
+            NAME_PREFIX=""
+            [ "$PREFIX_RFP" = "yes" ] && NAME_PREFIX="RFP_"
 
-            OUT="${NAME}_${VERSION}"
-            [ "$PREFIX_RFP" = "yes" ] && OUT="RFP_${OUT}"
-            [ "$IS_BETA" = "yes" ] && OUT="${OUT}_BETA"
+            VARIANT_NAME=""
+            [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
 
-            mkdir -p ../output/$NAME
-            cp build/$TARGET/$TARGET.bin ../output/$NAME/${OUT}.bin
+            FINAL_NAME="${NAME_PREFIX}${MODEL_TECH}${VARIANT_NAME}_${VERSION}"
+
+            echo "------------------------------"
+            echo "Building $TARGET → $FINAL_NAME"
+            echo "------------------------------"
+
+            # Patch HW_NAME dynamically
+            HFILE="bldc/hwconf/hw_${MODEL_TECH}.h"
+            if [ -f "$HFILE" ]; then
+              sed -i "s|#define HW_NAME.*|#define HW_NAME \"${FINAL_NAME}\"|g" "$HFILE"
+            fi
+
+            cd bldc
+            if make -n "$TARGET" >/dev/null 2>&1; then
+              make "$TARGET"
+            else
+              echo "Target $TARGET does not exist, skipping."
+              cd ..
+              return
+            fi
+            cd ..
+
+            mkdir -p "archive/$TAG/$BRAND_DIR/$MODEL_DIR"
+
+            cp "bldc/build/${MODEL_TECH}${VARIANT}/${MODEL_TECH}${VARIANT}.bin" \
+               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${FINAL_NAME}.bin"
           }
 
           if [ "$BUILD_MODE" = "single" ]; then
-            build_one "$HW_TARGET" "$SINGLE_MODEL"
+            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
+            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
 
-            if [ "$BUILD_NO_LIMITS" = "yes" ]; then
-              build_one "${HW_TARGET}_no_limits" "${SINGLE_MODEL}_no_limits"
-            fi
+            MODEL_DIR=$(basename "$(dirname "$hwfile")")
+            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+
+            [ "$BUILD_NO_LIMITS" = "yes" ] && \
+              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+
           else
-            echo "BUILD_MODE=all not implemented yet"
-            exit 1
+            find custom_hwconf -name "hw_*.h" | while read hwfile; do
+              MODEL_TECH=$(basename "$hwfile" .h)
+              MODEL_TECH=${MODEL_TECH#hw_}
+
+              MODEL_DIR=$(basename "$(dirname "$hwfile")")
+              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+
+              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" ""
+
+              [ "$BUILD_NO_LIMITS" = "yes" ] && \
+                build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            done
           fi
 
-      # ======================================================
-      # ARCHIVE EXPORT (NON-DESTRUCTIVE)
-      # ======================================================
-      - name: Push firmware to archive
+      - name: Ensure no .nojekyll
+        run: |
+          rm -f archive/.nojekyll
+
+      - name: Push to firmware archive repo
         uses: peaceiris/actions-gh-pages@v3
         with:
           external_repository: Foujiwara/rfp_fw_archive
           publish_branch: main
-          publish_dir: ./output
+          publish_dir: ./archive
           personal_token: ${{ secrets.ARCHIVE_TOKEN }}
-          keep_files: true
+          enable_jekyll: false
