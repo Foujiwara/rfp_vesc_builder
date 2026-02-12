@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Multi HW Archive
+name: VESC Firmware Builder – Multi HW Archive (SAFE)
 
 on:
   workflow_dispatch:
@@ -31,13 +31,14 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # 🔁 Injection de TOUS les hwconf custom
-      - name: Inject all custom hwconf
+      # Injection de tous les hwconf
+      - name: Inject custom hwconf
         run: |
-          find custom_hwconf -type f \( -name "*.c" -o -name "*.h" \) -exec cp {} bldc/hwconf/ \;
+          find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
+            -exec cp {} bldc/hwconf/ \;
 
-      # 🔧 Build de chaque HW custom
-      - name: Build all custom hardware
+      # Build sécurisé basé sur hw_*.h
+      - name: Build all custom HW (no clean, no spaces)
         run: |
           set -e
           VERSION="V6.06"
@@ -45,28 +46,24 @@ jobs:
 
           mkdir -p archive/$TAG
 
-          for brand in custom_hwconf/*; do
-            [ -d "$brand" ] || continue
-            BRAND=$(basename "$brand")
+          find custom_hwconf -name "hw_*.h" | while read hwfile; do
+            MODEL=$(basename "$hwfile" .h)
+            MODEL=${MODEL#hw_}
 
-            for model in "$brand"/*; do
-              [ -d "$model" ] || continue
-              MODEL=$(basename "$model")
+            BRAND=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-              echo "=============================="
-              echo "Building $BRAND / $MODEL"
-              echo "=============================="
+            echo "=============================="
+            echo "Building $BRAND / $MODEL"
+            echo "=============================="
 
-              cd bldc
-              make clean
-              make fw_$MODEL
-              cd ..
+            cd bldc
+            make fw_$MODEL
+            cd ..
 
-              mkdir -p archive/$TAG/$BRAND/$MODEL
+            mkdir -p archive/$TAG/$BRAND/$MODEL
 
-              cp bldc/build/$MODEL/$MODEL.bin \
-                 archive/$TAG/$BRAND/$MODEL/${MODEL}_${VERSION}_RFP.bin
-            done
+            cp bldc/build/$MODEL/$MODEL.bin \
+               archive/$TAG/$BRAND/$MODEL/${MODEL}_${VERSION}_RFP.bin
           done
 
       - name: Ensure no .nojekyll
