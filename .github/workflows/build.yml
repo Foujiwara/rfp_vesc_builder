@@ -124,13 +124,13 @@ jobs:
             done
           fi     
 
-       - name: Push firmware binaries to archive
-    uses: peaceiris/actions-gh-pages@v3
-    with:
-      external_repository: Foujiwara/rfp_fw_archive
-      publish_branch: main
-      publish_dir: ./archive
-      personal_token: ${{ secrets.ARCHIVE_TOKEN }}
-      keep_files: true
+             - name: Push firmware binaries to archive
+          uses: peaceiris/actions-gh-pages@v3
+          with:
+            external_repository: Foujiwara/rfp_fw_archive
+            publish_branch: main
+            publish_dir: ./archive
+            personal_token: ${{ secrets.ARCHIVE_TOKEN }}
+            keep_files: true
 
 
