@@ -1,0 +1,72 @@
+name: Build Custom VESC Firmware
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout builder repo
+        uses: actions/checkout@v3
+
+      - name: Get latest official tag
+        id: latest
+        run: |
+          TAG=$(git ls-remote --tags https://github.com/vedderb/bldc.git \
+          | grep -o 'v[0-9].*' \
+          | sort -V \
+          | tail -n1)
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Check if already built
+        id: check
+        run: |
+          git clone https://github.com/TONPSEUDO/rfp_fw_archive.git archive || true
+          if [ -d "archive/${{ steps.latest.outputs.tag }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Stop if already built
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          echo "Version already compiled. Stopping."
+          exit 0
+
+      - name: Clone official firmware
+        run: |
+          git clone --depth 1 --branch ${{ steps.latest.outputs.tag }} \
+          https://github.com/vedderb/bldc.git official
+
+      - name: Inject custom hwconf
+        run: |
+          cp custom_hwconf/* official/hwconf/
+
+      - name: Install ARM GCC
+        run: |
+          sudo apt update
+          sudo apt install -y gcc-arm-none-eabi make
+
+      - name: Build custom hardware
+        run: |
+          mkdir -p output/${{ steps.latest.outputs.tag }}
+          cd official
+          for file in ../custom_hwconf/*.h; do
+            hw=$(basename "$file" .h)
+            make clean
+            make HW=$hw
+            cp build/*.bin ../output/${{ steps.latest.outputs.tag }}/${hw}-${{ steps.latest.outputs.tag }}.bin
+          done
+
+      - name: Push to archive
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          external_repository: TONPSEUDO/rfp_fw_archive
+          publish_dir: ./output
+          publish_branch: main
+          personal_token: ${{ secrets.ARCHIVE_TOKEN }}
