@@ -124,16 +124,13 @@ jobs:
             done
           fi     
 
-      - name: Push firmware archive (git native)
-        run: |
-          set -e
-    
-          git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git archive_repo
-    
-          rsync -av archive/ archive_repo/
-    
-          cd archive_repo
-          git add .
-          git commit -m "Add firmware binaries" || true
-          git push
+       - name: Push firmware binaries to archive
+    uses: peaceiris/actions-gh-pages@v3
+    with:
+      external_repository: Foujiwara/rfp_fw_archive
+      publish_branch: main
+      publish_dir: ./archive
+      personal_token: ${{ secrets.ARCHIVE_TOKEN }}
+      keep_files: true
+
 
