@@ -1,26 +1,28 @@
-name: RFP VESC Firmware Builder
+name: RFP VESC Builder (Stable)
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout builder repo
         uses: actions/checkout@v4
 
-      - name: Resolve upstream version
+      # ===============================
+      # USER OPTIONS (SAFE)
+      # ===============================
+      - name: Resolve upstream (NO BUILD CHANGE)
         run: |
           set -e
 
-          # ===== USER CONFIG =====
-          # possible values:
-          #   latest
-          #   release_6_06
-          #   master
+          # -------- USER CHOICE ----------
           UPSTREAM_MODE="latest"
+          HW_NAME="C350ref"
+          PREFIX_RFP="yes"
+          # -------------------------------
 
           echo "UPSTREAM_MODE=$UPSTREAM_MODE"
 
@@ -31,70 +33,84 @@ jobs:
               | sort -V \
               | tail -n1)
 
-            if [ -z "$TAG" ]; then
-              echo "ERROR: no release branch found"
-              exit 1
-            fi
-
             VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-            BETA="no"
+            IS_BETA="no"
 
           elif [ "$UPSTREAM_MODE" = "master" ]; then
             TAG="master"
-            VERSION="MASTER"
-            BETA="yes"
+            VERSION="master"
+            IS_BETA="yes"
 
           elif [[ "$UPSTREAM_MODE" == release_* ]]; then
             TAG="$UPSTREAM_MODE"
             VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
-            BETA="no"
+            IS_BETA="no"
 
           else
             echo "ERROR: invalid UPSTREAM_MODE"
             exit 1
           fi
 
-          echo "Resolved upstream:"
-          echo "TAG=$TAG"
-          echo "VERSION=$VERSION"
-          echo "BETA=$BETA"
-
           echo "TAG=$TAG" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "BETA=$BETA" >> $GITHUB_ENV
+          echo "IS_BETA=$IS_BETA" >> $GITHUB_ENV
+          echo "HW_NAME=$HW_NAME" >> $GITHUB_ENV
+          echo "PREFIX_RFP=$PREFIX_RFP" >> $GITHUB_ENV
 
+          echo "Resolved:"
+          echo "TAG=$TAG"
+          echo "VERSION=$VERSION"
+          echo "BETA=$IS_BETA"
+
+      # ===============================
+      # OFFICIAL VESC FLOW (UNCHANGED)
+      # ===============================
       - name: Clone VESC firmware
         run: |
-          echo "Cloning branch: $TAG"
           git clone --depth 1 --branch "$TAG" https://github.com/vedderb/bldc.git bldc
 
-      - name: Install build dependencies
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y build-essential git wget libgl-dev libxcb-xinerama0
 
-      - name: Install ARM GCC (official VESC way)
+      - name: Install ARM SDK (official Makefile)
         run: |
           cd bldc
           make arm_sdk_install
 
-      - name: Inject custom HW configuration
+      - name: Inject custom HW config
         run: |
-          cp custom_hwconf/C350ref/* bldc/hwconf/
+          cp custom_hwconf/$HW_NAME/* bldc/hwconf/
 
-      - name: Build ONE hardware (TEST)
+      - name: Build firmware (OFFICIAL TARGET)
         run: |
-          set -e
           cd bldc
+          make fw_$HW_NAME
 
-          HW="C350ref"
+      # ===============================
+      # EXPORT (NON-DESTRUCTIVE)
+      # ===============================
+      - name: Export firmware
+        run: |
+          mkdir -p output/$HW_NAME
 
-          make fw_$HW
+          if [ "$PREFIX_RFP" = "yes" ]; then
+            OUT_NAME="RFP_${HW_NAME}_${VERSION}"
+          else
+            OUT_NAME="${HW_NAME}_${VERSION}"
+          fi
 
-          mkdir -p ../output/$HW
-          cp build/$HW/$HW.bin ../output/$HW/RFP_${HW}_${VERSION}.bin
+          if [ "$IS_BETA" = "yes" ]; then
+            OUT_NAME="${OUT_NAME}_BETA"
+          fi
 
-      - name: Push firmware to archive repo
+          cp bldc/build/$HW_NAME/$HW_NAME.bin \
+             output/$HW_NAME/${OUT_NAME}.bin
+
+          echo "Exported: ${OUT_NAME}.bin"
+
+      - name: Push to archive (NO DELETE)
         uses: peaceiris/actions-gh-pages@v3
         with:
           external_repository: Foujiwara/rfp_fw_archive
