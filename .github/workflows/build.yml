@@ -1,4 +1,4 @@
-name: VESC Firmware Build & Archive
+name: VESC Firmware Builder – Multi HW Archive
 
 on:
   workflow_dispatch:
@@ -26,25 +26,52 @@ jobs:
             libgl-dev \
             libxcb-xinerama0
 
-      - name: Install VESC ARM SDK
+      - name: Install VESC ARM SDK (official)
         run: |
           cd bldc
           make arm_sdk_install
 
-      - name: Inject custom hwconf
+      # 🔁 Injection de TOUS les hwconf custom
+      - name: Inject all custom hwconf
         run: |
-          cp custom_hwconf/* bldc/hwconf/
+          find custom_hwconf -type f \( -name "*.c" -o -name "*.h" \) -exec cp {} bldc/hwconf/ \;
 
-      - name: Build firmware (C350ref)
+      # 🔧 Build de chaque HW custom
+      - name: Build all custom hardware
         run: |
-          cd bldc
-          make fw_C350ref
+          set -e
+          VERSION="V6.06"
+          TAG="release_6_06"
 
-      - name: Prepare archive content
+          mkdir -p archive/$TAG
+
+          for brand in custom_hwconf/*; do
+            [ -d "$brand" ] || continue
+            BRAND=$(basename "$brand")
+
+            for model in "$brand"/*; do
+              [ -d "$model" ] || continue
+              MODEL=$(basename "$model")
+
+              echo "=============================="
+              echo "Building $BRAND / $MODEL"
+              echo "=============================="
+
+              cd bldc
+              make clean
+              make fw_$MODEL
+              cd ..
+
+              mkdir -p archive/$TAG/$BRAND/$MODEL
+
+              cp bldc/build/$MODEL/$MODEL.bin \
+                 archive/$TAG/$BRAND/$MODEL/${MODEL}_${VERSION}_RFP.bin
+            done
+          done
+
+      - name: Ensure no .nojekyll
         run: |
-          mkdir -p archive/release_6_06/C350ref
-          cp bldc/build/C350ref/C350ref.bin \
-             archive/release_6_06/C350ref/C350ref_release_6_06.bin
+          rm -f archive/.nojekyll
 
       - name: Push to firmware archive repo
         uses: peaceiris/actions-gh-pages@v3
@@ -53,3 +80,4 @@ jobs:
           publish_branch: main
           publish_dir: ./archive
           personal_token: ${{ secrets.ARCHIVE_TOKEN }}
+          enable_jekyll: false
