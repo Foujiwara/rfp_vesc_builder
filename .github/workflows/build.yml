@@ -1,16 +1,58 @@
-name: PROOF WORKFLOW
+name: VESC Firmware Build (Clean)
 
 on:
   workflow_dispatch:
 
 jobs:
-  proof:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-20.04
+
     steps:
-      - name: PROOF STEP
+      # 1️⃣ Checkout de TON repo (custom_hwconf)
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
+
+      # 2️⃣ Clone EXACT de la release officielle (VERROUILLÉE)
+      - name: Clone official VESC firmware
         run: |
-          echo "=============================="
-          echo "THIS IS THE NEW WORKFLOW"
-          echo "DATE: $(date)"
-          echo "=============================="
-          exit 0
+          git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
+          cd bldc
+          git describe --tags || true
+
+      # 3️⃣ PATCH MINIMAL OBLIGATOIRE (bug upstream connu)
+      - name: Patch PRIx64 bug (C standard)
+        run: |
+          sed -i \
+            -e 's/"0x%"PRIx32": 0x%"PRIx64"/"0x%" PRIx32 ": 0x%" PRIx64 "/g' \
+            -e 's/"0x%"PRIx32": %s - Unknown (PIDR = 0x%"PRIx64")/"0x%" PRIx32 ": %s - Unknown (PIDR = 0x%" PRIx64 ")"/g' \
+            bldc/blackmagic/target/adiv5.c
+
+      # 4️⃣ Injection de TES hwconf
+      - name: Inject custom hwconf
+        run: |
+          cp custom_hwconf/* bldc/hwconf/
+
+      # 5️⃣ Dépendances EXACTEMENT comme recommandé par le projet
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential \
+            gcc-arm-none-eabi \
+            make \
+            git \
+            wget \
+            libgl-dev \
+            libxcb-xinerama0
+
+      # 6️⃣ BUILD OFFICIEL – même commande que le projet
+      - name: Build firmware (fw_all)
+        run: |
+          cd bldc
+          make fw_all
+
+      # 7️⃣ Collecte des binaires
+      - name: Collect firmware binaries
+        run: |
+          mkdir -p output
+          find bldc/build -name "*.bin" -exec cp {} output/ \;
