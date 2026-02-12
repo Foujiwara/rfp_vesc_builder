@@ -1,6 +1,6 @@
 
 
-#define HW_NAME					"Rage Mechanics C700 V3 5.3"
+#define HW_NAME					"C700_V3"
 
 
 // HW properties
