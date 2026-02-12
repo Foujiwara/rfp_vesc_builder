@@ -11,18 +11,9 @@ jobs:
       - name: Checkout builder repo
         uses: actions/checkout@v4
 
-      - name: Load builder configuration
-        run: |
-          if [ ! -f builder.conf ]; then
-            echo "ERROR: builder.conf not found"
-            exit 1
-          fi
-          cat builder.conf
-
       - name: Clone official VESC firmware
         run: |
-          source builder.conf
-          git clone --depth 1 --branch "$TAG" https://github.com/vedderb/bldc.git bldc
+          git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
 
       - name: Install system dependencies
         run: |
@@ -45,13 +36,19 @@ jobs:
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      - name: Build firmware (config driven)
+      - name: Build firmware (all or single)
         run: |
           set -e
-          source builder.conf
 
-          # Extract version from tag: release_6_06 → 6.06
-          VERSION=$(echo "$TAG" | sed 's/release_//' | sed 's/_/./g')
+          # ==============================
+          # USER CONFIGURATION
+          # ==============================
+          BUILD_MODE="all"        # all | single
+          SINGLE_MODEL="C350V3"  # used only if BUILD_MODE=single
+
+          VERSION="V6.06"
+          TAG="release_6_06"
+          # ==============================
 
           mkdir -p archive/$TAG
 
@@ -59,57 +56,39 @@ jobs:
             MODEL_TECH="$1"
             BRAND_DIR="$2"
             MODEL_DIR="$3"
-            VARIANT="$4"   # "" or "_no_limits"
 
-            TARGET="fw_${MODEL_TECH}${VARIANT}"
-
-            NAME_PREFIX=""
-            [ "$PREFIX_RFP" = "yes" ] && NAME_PREFIX="RFP_"
-
-            VARIANT_NAME=""
-            [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
-
-            FINAL_NAME="${NAME_PREFIX}${MODEL_TECH}${VARIANT_NAME}_${VERSION}"
-
-            echo "------------------------------"
-            echo "Building $TARGET → $FINAL_NAME"
-            echo "------------------------------"
-
-            # Patch HW_NAME dynamically
-            HFILE="bldc/hwconf/hw_${MODEL_TECH}.h"
-            if [ -f "$HFILE" ]; then
-              sed -i "s|#define HW_NAME.*|#define HW_NAME \"${FINAL_NAME}\"|g" "$HFILE"
-            fi
+            echo "=============================="
+            echo "Building $BRAND_DIR / $MODEL_DIR (fw_$MODEL_TECH)"
+            echo "=============================="
 
             cd bldc
-            if make -n "$TARGET" >/dev/null 2>&1; then
-              make "$TARGET"
-            else
-              echo "Target $TARGET does not exist, skipping."
-              cd ..
-              return
-            fi
+            make fw_$MODEL_TECH
             cd ..
 
             mkdir -p "archive/$TAG/$BRAND_DIR/$MODEL_DIR"
 
-            cp "bldc/build/${MODEL_TECH}${VARIANT}/${MODEL_TECH}${VARIANT}.bin" \
-               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${FINAL_NAME}.bin"
+            cp "bldc/build/$MODEL_TECH/$MODEL_TECH.bin" \
+               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${MODEL_TECH}_${VERSION}_RFP.bin"
           }
 
           if [ "$BUILD_MODE" = "single" ]; then
+            echo ">>> SINGLE BUILD MODE: $SINGLE_MODEL"
+
             hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
+
+            if [ -z "$hwfile" ]; then
+              echo "ERROR: hw_${SINGLE_MODEL}.h not found"
+              exit 1
+            fi
 
             MODEL_DIR=$(basename "$(dirname "$hwfile")")
             BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
-
-            [ "$BUILD_NO_LIMITS" = "yes" ] && \
-              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR"
 
           else
+            echo ">>> FULL BUILD MODE"
+
             find custom_hwconf -name "hw_*.h" | while read hwfile; do
               MODEL_TECH=$(basename "$hwfile" .h)
               MODEL_TECH=${MODEL_TECH#hw_}
@@ -117,10 +96,7 @@ jobs:
               MODEL_DIR=$(basename "$(dirname "$hwfile")")
               BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" ""
-
-              [ "$BUILD_NO_LIMITS" = "yes" ] && \
-                build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR"
             done
           fi
 
