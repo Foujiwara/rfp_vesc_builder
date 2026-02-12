@@ -1,49 +1,16 @@
-name: Build VESC Firmware (OFFICIAL SCRIPT)
+name: PROOF WORKFLOW
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: ubuntu-20.04
-
+  proof:
+    runs-on: ubuntu-latest
     steps:
-      # 1️⃣ Checkout de ton repo (hwconf custom)
-      - name: Checkout builder repo
-        uses: actions/checkout@v3
-
-      # 2️⃣ Clone EXACT de la release officielle
-      - name: Clone official VESC firmware
+      - name: PROOF STEP
         run: |
-          git clone --branch release_6_06 https://github.com/vedderb/bldc.git bldc
-
-      # 3️⃣ Injection de tes hwconf custom
-      - name: Inject custom hwconf
-        run: |
-          cp custom_hwconf/* bldc/hwconf/
-
-      # 4️⃣ Dépendances EXACTES recommandées
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y \
-            git \
-            build-essential \
-            gcc-arm-none-eabi \
-            make \
-            wget \
-            libgl-dev \
-            libxcb-xinerama0
-
-      # 5️⃣ BUILD — SCRIPT OFFICIEL DE RELEASE
-      - name: Build firmware (official release script)
-        run: |
-          cd bldc
-          chmod +x build_all.sh
-          ./build_all.sh
-
-      # 6️⃣ Collecte des binaires
-      - name: Collect firmware binaries
-        run: |
-          mkdir -p output
-          find bldc -name "*.bin" -exec cp {} output/ \;
+          echo "=============================="
+          echo "THIS IS THE NEW WORKFLOW"
+          echo "DATE: $(date)"
+          echo "=============================="
+          exit 0
