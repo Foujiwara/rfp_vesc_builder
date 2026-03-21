@@ -36,6 +36,49 @@ jobs:
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
+      # ✅ NOUVELLE STEP — PATCH GLOBAL
+      - name: Patch HW_NAME (optional)
+        run: |
+          FW_NAME_SUFFIX="RFP-Performance"   # "" = désactivé
+
+          patch_all_hw_names() {
+
+            if [ -z "$FW_NAME_SUFFIX" ]; then
+              echo "HW_NAME patch disabled"
+              return
+            fi
+
+            echo "======================================"
+            echo "Patching ALL HW_NAME with: $FW_NAME_SUFFIX"
+            echo "======================================"
+
+            find bldc/hwconf -name "hw_*.h" | while read FILE; do
+
+              if grep -q '#define HW_NAME' "$FILE"; then
+
+                CURRENT=$(grep '#define HW_NAME' "$FILE" | sed -E 's/.*"([^"]+)".*/\1/')
+
+                # évite double ajout
+                if echo "$CURRENT" | grep -q "($FW_NAME_SUFFIX)"; then
+                  echo "Already patched: $FILE"
+                  continue
+                fi
+
+                # enlève ancien suffixe éventuel
+                BASE=$(echo "$CURRENT" | sed -E 's/ \(.*\)$//')
+
+                NEW_NAME="${BASE} (${FW_NAME_SUFFIX})"
+
+                echo "→ $FILE : $CURRENT → $NEW_NAME"
+
+                sed -i -E "s/#define HW_NAME[[:space:]]+\"[^\"]+\"/#define HW_NAME \"${NEW_NAME}\"/" "$FILE"
+              fi
+
+            done
+          }
+
+          patch_all_hw_names
+
       - name: Build firmware (configurable)
         run: |
           set -e
@@ -44,7 +87,7 @@ jobs:
           # USER CONFIGURATION
           # ==============================
           BUILD_MODE="all"        # all | single
-          SINGLE_MODEL="C350V3"  # used only if BUILD_MODE=single
+          SINGLE_MODEL="C350V3"
 
           BUILD_NO_LIMITS="yes"  # yes | no
           PREFIX_RFP="yes"       # yes | no
