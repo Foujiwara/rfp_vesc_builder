@@ -36,48 +36,47 @@ jobs:
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ NOUVELLE STEP — PATCH GLOBAL
+      # ✅ PATCH GLOBAL PROPRE
       - name: Patch HW_NAME (optional)
         run: |
           FW_NAME_SUFFIX="RFP-Performance"   # "" = désactivé
 
-          patch_all_hw_names() {
+          if [ -z "$FW_NAME_SUFFIX" ]; then
+            echo "HW_NAME patch disabled"
+            exit 0
+          fi
 
-            if [ -z "$FW_NAME_SUFFIX" ]; then
-              echo "HW_NAME patch disabled"
-              return
-            fi
+          echo "======================================"
+          echo "Patching ALL HW_NAME with: $FW_NAME_SUFFIX"
+          echo "======================================"
 
-            echo "======================================"
-            echo "Patching ALL HW_NAME with: $FW_NAME_SUFFIX"
-            echo "======================================"
+          find bldc/hwconf -name "hw_*.h" | while read FILE; do
 
-            find bldc/hwconf -name "hw_*.h" | while read FILE; do
+            if grep -q '#define HW_NAME' "$FILE"; then
 
-              if grep -q '#define HW_NAME' "$FILE"; then
+              LINE=$(grep '#define HW_NAME' "$FILE")
 
-                CURRENT=$(grep '#define HW_NAME' "$FILE" | sed -E 's/.*"([^"]+)".*/\1/')
+              CURRENT=$(echo "$LINE" | sed -E 's/.*"([^"]+)".*/\1/')
 
-                # évite double ajout
-                if echo "$CURRENT" | grep -q "($FW_NAME_SUFFIX)"; then
-                  echo "Already patched: $FILE"
-                  continue
-                fi
-
-                # enlève ancien suffixe éventuel
-                BASE=$(echo "$CURRENT" | sed -E 's/ \(.*\)$//')
-
-                NEW_NAME="${BASE} (${FW_NAME_SUFFIX})"
-
-                echo "→ $FILE : $CURRENT → $NEW_NAME"
-
-                sed -i -E "s/#define HW_NAME[[:space:]]+\"[^\"]+\"/#define HW_NAME \"${NEW_NAME}\"/" "$FILE"
+              # skip si déjà suffixé
+              if echo "$CURRENT" | grep -q "$FW_NAME_SUFFIX"; then
+                echo "Already patched: $FILE"
+                continue
               fi
 
-            done
-          }
+              NEW_NAME="${CURRENT} ${FW_NAME_SUFFIX}"
 
-          patch_all_hw_names
+              echo "→ $FILE : $CURRENT → $NEW_NAME"
+
+              # escape sécurisé
+              ESCAPED_NEW_NAME=$(printf '%s\n' "$NEW_NAME" | sed 's/[&/\]/\\&/g')
+
+              # remplace uniquement le contenu entre guillemets
+              sed -i -E "s|(#define HW_NAME[[:space:]]+\")[^\"]+(\" )?|\1${ESCAPED_NEW_NAME}\2|" "$FILE"
+
+            fi
+
+          done
 
       - name: Build firmware (configurable)
         run: |
@@ -89,8 +88,8 @@ jobs:
           BUILD_MODE="all"        # all | single
           SINGLE_MODEL="C350V3"
 
-          BUILD_NO_LIMITS="yes"  # yes | no
-          PREFIX_RFP="yes"       # yes | no
+          BUILD_NO_LIMITS="yes"
+          PREFIX_RFP="yes"
 
           VERSION="V6.06"
           TAG="release_6_06"
@@ -102,7 +101,7 @@ jobs:
             MODEL_TECH="$1"
             BRAND_DIR="$2"
             MODEL_DIR="$3"
-            VARIANT="$4"   # "" or "_no_limits"
+            VARIANT="$4"
 
             TARGET="fw_${MODEL_TECH}${VARIANT}"
 
