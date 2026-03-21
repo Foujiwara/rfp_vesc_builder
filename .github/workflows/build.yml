@@ -24,13 +24,11 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # Injection root (compatible VESC targets)
       - name: Inject custom hwconf
         run: |
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # Patch uniquement tes HW (root)
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
@@ -45,7 +43,7 @@ jobs:
         run: |
           set -e
 
-          BUILD_MODE="single"        # all | single
+          BUILD_MODE="single"
           SINGLE_MODEL="C350_V3"
 
           BUILD_NO_LIMITS="yes"
@@ -64,13 +62,10 @@ jobs:
 
             TARGET="fw_${MODEL}${VARIANT}"
 
-            echo "Building $TARGET"
-
             cd bldc
             if make -n "$TARGET" >/dev/null 2>&1; then
               make "$TARGET"
             else
-              echo "Target $TARGET does not exist, skipping."
               cd ..
               return
             fi
@@ -88,52 +83,35 @@ jobs:
                "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin"
           }
 
-          if [ "$BUILD_MODE" = "single" ]; then
-            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
+          hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
 
-            MODEL_DIR=$(basename "$(dirname "$hwfile")")
-            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+          MODEL_DIR=$(basename "$(dirname "$hwfile")")
+          BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+          build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
 
-            [ "$BUILD_NO_LIMITS" = "yes" ] && \
-              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+          [ "$BUILD_NO_LIMITS" = "yes" ] && \
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
 
-          else
-            find custom_hwconf -name "hw_*.h" | while read hwfile; do
-              MODEL=$(basename "$hwfile" .h)
-              MODEL=${MODEL#hw_}
-
-              MODEL_DIR=$(basename "$(dirname "$hwfile")")
-              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
-
-              build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
-
-              [ "$BUILD_NO_LIMITS" = "yes" ] && \
-                build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
-            done
-          fi
-
-      # ✅ Structure propre + historique
-      - name: Prepare structured archive
+      # ✅ déplacement intelligent
+      - name: Prepare archive (move old versions)
         run: |
           DATE=$(date +%Y%m%d_%H%M)
 
           find archive -name "*.bin" | while read FILE; do
             NAME=$(basename "$FILE")
+            REL_PATH="${FILE#archive/}"
+            DEST_DIR="deploy/$(dirname "$REL_PATH")"
 
-            # extrait modèle (ex: C350_V3)
-            MODEL=$(echo "$NAME" | sed -E 's/^RFP_([^_]+_[^_]+).*/\1/')
+            mkdir -p "$DEST_DIR/history/$DATE"
 
-            DEST="deploy/$TAG/$MODEL"
-            mkdir -p "$DEST/history"
+            # si ancien fichier existe → déplacement
+            if [ -f "$DEST_DIR/$NAME" ]; then
+              mv "$DEST_DIR/$NAME" "$DEST_DIR/history/$DATE/$NAME"
+            fi
 
-            # version actuelle (overwrite)
-            cp "$FILE" "$DEST/$NAME"
-
-            # historique
-            cp "$FILE" "$DEST/history/${DATE}.bin"
+            # copie nouveau fichier
+            cp "$FILE" "$DEST_DIR/$NAME"
           done
 
       - name: Push to firmware archive repo
