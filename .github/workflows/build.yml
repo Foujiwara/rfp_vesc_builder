@@ -24,14 +24,14 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # ✅ injection à la racine (comme avant)
-      - name: Inject custom hwconf (root-level)
+      # Injection root (compatible VESC targets)
+      - name: Inject custom hwconf
         run: |
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ patch UNIQUEMENT les fichiers à la racine (les tiens)
-      - name: Patch HW_NAME (root-only)
+      # Patch uniquement tes HW (root)
+      - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
@@ -46,7 +46,7 @@ jobs:
           set -e
 
           BUILD_MODE="single"        # all | single
-          SINGLE_MODEL="C350_V3"     # doit correspondre à hw_C350_V3.h
+          SINGLE_MODEL="C350_V3"
 
           BUILD_NO_LIMITS="yes"
           PREFIX_RFP="yes"
@@ -115,11 +115,33 @@ jobs:
             done
           fi
 
-      - name: Push
+      # ✅ Structure propre + historique
+      - name: Prepare structured archive
+        run: |
+          DATE=$(date +%Y%m%d_%H%M)
+
+          find archive -name "*.bin" | while read FILE; do
+            NAME=$(basename "$FILE")
+
+            # extrait modèle (ex: C350_V3)
+            MODEL=$(echo "$NAME" | sed -E 's/^RFP_([^_]+_[^_]+).*/\1/')
+
+            DEST="deploy/$TAG/$MODEL"
+            mkdir -p "$DEST/history"
+
+            # version actuelle (overwrite)
+            cp "$FILE" "$DEST/$NAME"
+
+            # historique
+            cp "$FILE" "$DEST/history/${DATE}.bin"
+          done
+
+      - name: Push to firmware archive repo
         uses: peaceiris/actions-gh-pages@v3
         with:
           external_repository: Foujiwara/rfp_fw_archive
           publish_branch: main
-          publish_dir: ./archive
+          publish_dir: ./deploy
           personal_token: ${{ secrets.ARCHIVE_TOKEN }}
+          keep_files: true
           enable_jekyll: false
