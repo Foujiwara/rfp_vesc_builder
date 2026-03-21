@@ -36,7 +36,7 @@ jobs:
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ PATCH MINIMAL (adapté à ton usage)
+      # ✅ PATCH SAFE (ne casse rien)
       - name: Patch HW_NAME (optional)
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
@@ -50,15 +50,115 @@ jobs:
 
           find bldc/hwconf -name "hw_*.h" | while read FILE; do
 
-            # skip si pas de HW_NAME
-            grep -q 'HW_NAME' "$FILE" || continue
+            LINE=$(grep -n '#define HW_NAME' "$FILE" | cut -d: -f1)
+
+            [ -z "$LINE" ] && continue
+
+            CURRENT=$(sed -n "${LINE}p" "$FILE" | sed -E 's/.*"([^"]+)".*/\1/')
 
             # skip si déjà patché
-            grep -q "$FW_NAME_SUFFIX" "$FILE" && continue
+            echo "$CURRENT" | grep -q "$FW_NAME_SUFFIX" && continue
 
-            echo "→ $FILE"
+            NEW_NAME="${CURRENT} ${FW_NAME_SUFFIX}"
 
-            # remplace uniquement le contenu entre guillemets
-            sed -i -E 's|("([^"]*)")|"\2 '"$FW_NAME_SUFFIX"'"|' "$FILE"
+            echo "→ $FILE : $CURRENT → $NEW_NAME"
+
+            # remplacement ultra ciblé ligne unique
+            sed -i "${LINE}s|\"[^\"]*\"|\"${NEW_NAME}\"|" "$FILE"
 
           done
+
+      - name: Build firmware (configurable)
+        run: |
+          set -e
+
+          BUILD_MODE="all"
+          SINGLE_MODEL="C350V3"
+
+          BUILD_NO_LIMITS="yes"
+          PREFIX_RFP="yes"
+
+          VERSION="V6.06"
+          TAG="release_6_06"
+
+          mkdir -p archive/$TAG
+
+          build_one() {
+            MODEL_TECH="$1"
+            BRAND_DIR="$2"
+            MODEL_DIR="$3"
+            VARIANT="$4"
+
+            TARGET="fw_${MODEL_TECH}${VARIANT}"
+
+            echo "------------------------------"
+            echo "Building $TARGET"
+            echo "------------------------------"
+
+            cd bldc
+            if make -n "$TARGET" >/dev/null 2>&1; then
+              make "$TARGET"
+            else
+              echo "Target $TARGET does not exist, skipping."
+              cd ..
+              return
+            fi
+            cd ..
+
+            NAME_PREFIX=""
+            [ "$PREFIX_RFP" = "yes" ] && NAME_PREFIX="RFP_"
+
+            VARIANT_NAME=""
+            [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
+
+            mkdir -p "archive/$TAG/$BRAND_DIR/$MODEL_DIR"
+
+            cp "bldc/build/${MODEL_TECH}${VARIANT}/${MODEL_TECH}${VARIANT}.bin" \
+               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${NAME_PREFIX}${MODEL_TECH}${VARIANT_NAME}_${VERSION}.bin"
+          }
+
+          if [ "$BUILD_MODE" = "single" ]; then
+            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
+            [ -z "$hwfile" ] && exit 1
+
+            MODEL_DIR=$(basename "$(dirname "$hwfile")")
+            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+
+            [ "$BUILD_NO_LIMITS" = "yes" ] && \
+              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+
+          else
+            find custom_hwconf -name "hw_*.h" | while read hwfile; do
+              MODEL_TECH=$(basename "$hwfile" .h)
+              MODEL_TECH=${MODEL_TECH#hw_}
+
+              MODEL_DIR=$(basename "$(dirname "$hwfile")")
+              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+
+              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" ""
+
+              [ "$BUILD_NO_LIMITS" = "yes" ] && \
+                build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            done
+          fi
+
+      # ✅ DEBUG CRUCIAL
+      - name: Debug archive content
+        run: |
+          echo "==== ARCHIVE CONTENT ===="
+          ls -R archive || true
+
+      - name: Ensure no .nojekyll
+        run: |
+          rm -f archive/.nojekyll
+
+      - name: Push to firmware archive repo
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          external_repository: Foujiwara/rfp_fw_archive
+          publish_branch: main
+          publish_dir: ./archive
+          personal_token: ${{ secrets.ARCHIVE_TOKEN }}
+          enable_jekyll: false
