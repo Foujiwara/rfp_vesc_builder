@@ -24,12 +24,10 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # ✅ injection propre
       - name: Inject custom hwconf
         run: |
           rsync -av custom_hwconf/ bldc/hwconf/
 
-      # ✅ patch ciblé
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
@@ -41,7 +39,6 @@ jobs:
             [ ! -f "$TARGET_FILE" ] && continue
 
             sed -i 's/\r$//' "$TARGET_FILE"
-
             grep -q "$FW_NAME_SUFFIX" "$TARGET_FILE" && continue
 
             sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$TARGET_FILE"
@@ -70,8 +67,18 @@ jobs:
 
             TARGET="fw_${MODEL}${VARIANT}"
 
+            echo "Building $TARGET"
+
             cd bldc
-            make "$TARGET" || { cd ..; return; }
+
+            if make -n "$TARGET" >/dev/null 2>&1; then
+              make "$TARGET"
+            else
+              echo "Target $TARGET does not exist, skipping."
+              cd ..
+              return
+            fi
+
             cd ..
 
             PREFIX=""
@@ -86,17 +93,16 @@ jobs:
                archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin
           }
 
-          if [ "$BUILD_MODE" = "single" ]; then
-            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
+          hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
+          [ -z "$hwfile" ] && echo "HW not found" && exit 1
 
-            MODEL_DIR=$(basename "$(dirname "$hwfile")")
-            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+          MODEL_DIR=$(basename "$(dirname "$hwfile")")
+          BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+          build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
 
-            [ "$BUILD_NO_LIMITS" = "yes" ] && \
-              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
-          fi
+          [ "$BUILD_NO_LIMITS" = "yes" ] && \
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
 
       - name: Push
         uses: peaceiris/actions-gh-pages@v3
