@@ -36,41 +36,28 @@ jobs:
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ PATCH SAFE ET CORRIGÉ
-      - name: Patch HW_NAME (optional)
+      # ✅ FIX CRLF + PATCH SIMPLE
+      - name: Patch HW_NAME (safe)
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
-          if [ -z "$FW_NAME_SUFFIX" ]; then
-            echo "Patch disabled"
-            exit 0
-          fi
-
-          echo "Applying suffix: $FW_NAME_SUFFIX"
+          echo "Cleaning CRLF + patching..."
 
           find bldc/hwconf -name "hw_*.h" | while read FILE; do
 
-            # match avec tabs / espaces
-            LINE=$(grep -n -E '#define[[:space:]]+HW_NAME' "$FILE" | cut -d: -f1)
+            # 🔥 FIX CRLF (LE vrai problème)
+            sed -i 's/\r$//' "$FILE"
 
-            [ -z "$LINE" ] && continue
-
-            RAW_LINE=$(sed -n "${LINE}p" "$FILE")
-
-            CURRENT=$(echo "$RAW_LINE" | sed -E 's/.*"([^"]+)".*/\1/')
-
-            # sécurité si extraction foire
-            [ -z "$CURRENT" ] && echo "Skip (empty): $FILE" && continue
+            # skip si pas de HW_NAME
+            grep -q 'HW_NAME' "$FILE" || continue
 
             # skip si déjà patché
-            echo "$CURRENT" | grep -q "$FW_NAME_SUFFIX" && continue
+            grep -q "$FW_NAME_SUFFIX" "$FILE" && continue
 
-            NEW_NAME="${CURRENT} ${FW_NAME_SUFFIX}"
+            echo "→ $FILE"
 
-            echo "→ $FILE : $CURRENT → $NEW_NAME"
-
-            # remplacement ciblé uniquement sur la ligne
-            sed -i "${LINE}s|\"[^\"]*\"|\"${NEW_NAME}\"|" "$FILE"
+            # patch simple et fiable
+            sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$FILE"
 
           done
 
@@ -78,10 +65,7 @@ jobs:
         run: |
           set -e
 
-          # ==============================
-          # USER CONFIGURATION
-          # ==============================
-          BUILD_MODE="all"        # all | single
+          BUILD_MODE="all"
           SINGLE_MODEL="C350V3"
 
           BUILD_NO_LIMITS="yes"
@@ -89,7 +73,6 @@ jobs:
 
           VERSION="V6.06"
           TAG="release_6_06"
-          # ==============================
 
           mkdir -p archive/$TAG
 
@@ -101,15 +84,12 @@ jobs:
 
             TARGET="fw_${MODEL_TECH}${VARIANT}"
 
-            echo "------------------------------"
             echo "Building $TARGET"
-            echo "------------------------------"
 
             cd bldc
             if make -n "$TARGET" >/dev/null 2>&1; then
               make "$TARGET"
             else
-              echo "Target $TARGET does not exist, skipping."
               cd ..
               return
             fi
@@ -128,10 +108,8 @@ jobs:
           }
 
           if [ "$BUILD_MODE" = "single" ]; then
-            echo ">>> SINGLE BUILD MODE: $SINGLE_MODEL"
-
             hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
+            [ -z "$hwfile" ] && exit 1
 
             MODEL_DIR=$(basename "$(dirname "$hwfile")")
             BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
@@ -142,8 +120,6 @@ jobs:
               build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
 
           else
-            echo ">>> FULL BUILD MODE"
-
             find custom_hwconf -name "hw_*.h" | while read hwfile; do
               MODEL_TECH=$(basename "$hwfile" .h)
               MODEL_TECH=${MODEL_TECH#hw_}
