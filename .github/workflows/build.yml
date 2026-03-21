@@ -36,7 +36,7 @@ jobs:
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ PATCH SAFE (ne casse rien)
+      # ✅ PATCH SAFE ET CORRIGÉ
       - name: Patch HW_NAME (optional)
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
@@ -50,11 +50,17 @@ jobs:
 
           find bldc/hwconf -name "hw_*.h" | while read FILE; do
 
-            LINE=$(grep -n '#define HW_NAME' "$FILE" | cut -d: -f1)
+            # match avec tabs / espaces
+            LINE=$(grep -n -E '#define[[:space:]]+HW_NAME' "$FILE" | cut -d: -f1)
 
             [ -z "$LINE" ] && continue
 
-            CURRENT=$(sed -n "${LINE}p" "$FILE" | sed -E 's/.*"([^"]+)".*/\1/')
+            RAW_LINE=$(sed -n "${LINE}p" "$FILE")
+
+            CURRENT=$(echo "$RAW_LINE" | sed -E 's/.*"([^"]+)".*/\1/')
+
+            # sécurité si extraction foire
+            [ -z "$CURRENT" ] && echo "Skip (empty): $FILE" && continue
 
             # skip si déjà patché
             echo "$CURRENT" | grep -q "$FW_NAME_SUFFIX" && continue
@@ -63,7 +69,7 @@ jobs:
 
             echo "→ $FILE : $CURRENT → $NEW_NAME"
 
-            # remplacement ultra ciblé ligne unique
+            # remplacement ciblé uniquement sur la ligne
             sed -i "${LINE}s|\"[^\"]*\"|\"${NEW_NAME}\"|" "$FILE"
 
           done
@@ -72,7 +78,10 @@ jobs:
         run: |
           set -e
 
-          BUILD_MODE="all"
+          # ==============================
+          # USER CONFIGURATION
+          # ==============================
+          BUILD_MODE="all"        # all | single
           SINGLE_MODEL="C350V3"
 
           BUILD_NO_LIMITS="yes"
@@ -80,6 +89,7 @@ jobs:
 
           VERSION="V6.06"
           TAG="release_6_06"
+          # ==============================
 
           mkdir -p archive/$TAG
 
@@ -118,8 +128,10 @@ jobs:
           }
 
           if [ "$BUILD_MODE" = "single" ]; then
+            echo ">>> SINGLE BUILD MODE: $SINGLE_MODEL"
+
             hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-            [ -z "$hwfile" ] && exit 1
+            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
 
             MODEL_DIR=$(basename "$(dirname "$hwfile")")
             BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
@@ -130,6 +142,8 @@ jobs:
               build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
 
           else
+            echo ">>> FULL BUILD MODE"
+
             find custom_hwconf -name "hw_*.h" | while read hwfile; do
               MODEL_TECH=$(basename "$hwfile" .h)
               MODEL_TECH=${MODEL_TECH#hw_}
@@ -143,12 +157,6 @@ jobs:
                 build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
             done
           fi
-
-      # ✅ DEBUG CRUCIAL
-      - name: Debug archive content
-        run: |
-          echo "==== ARCHIVE CONTENT ===="
-          ls -R archive || true
 
       - name: Ensure no .nojekyll
         run: |
