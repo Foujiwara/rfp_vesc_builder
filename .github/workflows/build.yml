@@ -36,141 +36,29 @@ jobs:
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ PATCH GLOBAL PROPRE
+      # ✅ PATCH MINIMAL (adapté à ton usage)
       - name: Patch HW_NAME (optional)
         run: |
-          FW_NAME_SUFFIX="RFP-Performance"   # "" = désactivé
+          FW_NAME_SUFFIX="RFP-Performance"
 
           if [ -z "$FW_NAME_SUFFIX" ]; then
-            echo "HW_NAME patch disabled"
+            echo "Patch disabled"
             exit 0
           fi
 
-          echo "======================================"
-          echo "Patching ALL HW_NAME with: $FW_NAME_SUFFIX"
-          echo "======================================"
+          echo "Applying suffix: $FW_NAME_SUFFIX"
 
           find bldc/hwconf -name "hw_*.h" | while read FILE; do
 
-            if grep -q '#define HW_NAME' "$FILE"; then
+            # skip si pas de HW_NAME
+            grep -q 'HW_NAME' "$FILE" || continue
 
-              LINE=$(grep '#define HW_NAME' "$FILE")
+            # skip si déjà patché
+            grep -q "$FW_NAME_SUFFIX" "$FILE" && continue
 
-              CURRENT=$(echo "$LINE" | sed -E 's/.*"([^"]+)".*/\1/')
+            echo "→ $FILE"
 
-              # skip si déjà suffixé
-              if echo "$CURRENT" | grep -q "$FW_NAME_SUFFIX"; then
-                echo "Already patched: $FILE"
-                continue
-              fi
-
-              NEW_NAME="${CURRENT} ${FW_NAME_SUFFIX}"
-
-              echo "→ $FILE : $CURRENT → $NEW_NAME"
-
-              # escape sécurisé
-              ESCAPED_NEW_NAME=$(printf '%s\n' "$NEW_NAME" | sed 's/[&/\]/\\&/g')
-
-              # remplace uniquement le contenu entre guillemets
-              sed -i -E "s|(#define HW_NAME[[:space:]]+\")[^\"]+(\" )?|\1${ESCAPED_NEW_NAME}\2|" "$FILE"
-
-            fi
+            # remplace uniquement le contenu entre guillemets
+            sed -i -E 's|("([^"]*)")|"\2 '"$FW_NAME_SUFFIX"'"|' "$FILE"
 
           done
-
-      - name: Build firmware (configurable)
-        run: |
-          set -e
-
-          # ==============================
-          # USER CONFIGURATION
-          # ==============================
-          BUILD_MODE="all"        # all | single
-          SINGLE_MODEL="C350V3"
-
-          BUILD_NO_LIMITS="yes"
-          PREFIX_RFP="yes"
-
-          VERSION="V6.06"
-          TAG="release_6_06"
-          # ==============================
-
-          mkdir -p archive/$TAG
-
-          build_one() {
-            MODEL_TECH="$1"
-            BRAND_DIR="$2"
-            MODEL_DIR="$3"
-            VARIANT="$4"
-
-            TARGET="fw_${MODEL_TECH}${VARIANT}"
-
-            echo "------------------------------"
-            echo "Building $TARGET"
-            echo "------------------------------"
-
-            cd bldc
-            if make -n "$TARGET" >/dev/null 2>&1; then
-              make "$TARGET"
-            else
-              echo "Target $TARGET does not exist, skipping."
-              cd ..
-              return
-            fi
-            cd ..
-
-            NAME_PREFIX=""
-            [ "$PREFIX_RFP" = "yes" ] && NAME_PREFIX="RFP_"
-
-            VARIANT_NAME=""
-            [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
-
-            mkdir -p "archive/$TAG/$BRAND_DIR/$MODEL_DIR"
-
-            cp "bldc/build/${MODEL_TECH}${VARIANT}/${MODEL_TECH}${VARIANT}.bin" \
-               "archive/$TAG/$BRAND_DIR/$MODEL_DIR/${NAME_PREFIX}${MODEL_TECH}${VARIANT_NAME}_${VERSION}.bin"
-          }
-
-          if [ "$BUILD_MODE" = "single" ]; then
-            echo ">>> SINGLE BUILD MODE: $SINGLE_MODEL"
-
-            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
-
-            MODEL_DIR=$(basename "$(dirname "$hwfile")")
-            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
-
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
-
-            [ "$BUILD_NO_LIMITS" = "yes" ] && \
-              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
-
-          else
-            echo ">>> FULL BUILD MODE"
-
-            find custom_hwconf -name "hw_*.h" | while read hwfile; do
-              MODEL_TECH=$(basename "$hwfile" .h)
-              MODEL_TECH=${MODEL_TECH#hw_}
-
-              MODEL_DIR=$(basename "$(dirname "$hwfile")")
-              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
-
-              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" ""
-
-              [ "$BUILD_NO_LIMITS" = "yes" ] && \
-                build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
-            done
-          fi
-
-      - name: Ensure no .nojekyll
-        run: |
-          rm -f archive/.nojekyll
-
-      - name: Push to firmware archive repo
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          external_repository: Foujiwara/rfp_fw_archive
-          publish_branch: main
-          publish_dir: ./archive
-          personal_token: ${{ secrets.ARCHIVE_TOKEN }}
-          enable_jekyll: false
