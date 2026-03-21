@@ -17,39 +17,36 @@ jobs:
       - name: Install deps
         run: |
           sudo apt update
-          sudo apt install -y build-essential git make wget libgl-dev libxcb-xinerama0 rsync
+          sudo apt install -y build-essential git make wget libgl-dev libxcb-xinerama0
 
       - name: Install SDK
         run: |
           cd bldc
           make arm_sdk_install
 
-      - name: Inject custom hwconf
+      # ✅ injection à la racine (comme avant)
+      - name: Inject custom hwconf (root-level)
         run: |
-          rsync -av custom_hwconf/ bldc/hwconf/
+          find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
+            -exec cp {} bldc/hwconf/ \;
 
-      - name: Patch HW_NAME
+      # ✅ patch UNIQUEMENT les fichiers à la racine (les tiens)
+      - name: Patch HW_NAME (root-only)
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
-          find custom_hwconf -name "hw_*.h" | while read SRC_FILE; do
-            REL_PATH="${SRC_FILE#custom_hwconf/}"
-            TARGET_FILE="bldc/hwconf/$REL_PATH"
-
-            [ ! -f "$TARGET_FILE" ] && continue
-
-            sed -i 's/\r$//' "$TARGET_FILE"
-            grep -q "$FW_NAME_SUFFIX" "$TARGET_FILE" && continue
-
-            sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$TARGET_FILE"
+          find bldc/hwconf -maxdepth 1 -name "hw_*.h" | while read FILE; do
+            sed -i 's/\r$//' "$FILE"
+            grep -q "$FW_NAME_SUFFIX" "$FILE" && continue
+            sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$FILE"
           done
 
       - name: Build
         run: |
           set -e
 
-          BUILD_MODE="single"
-          SINGLE_MODEL="C350_V3"
+          BUILD_MODE="single"        # all | single
+          SINGLE_MODEL="C350_V3"     # doit correspondre à hw_C350_V3.h
 
           BUILD_NO_LIMITS="yes"
           PREFIX_RFP="yes"
@@ -70,7 +67,6 @@ jobs:
             echo "Building $TARGET"
 
             cd bldc
-
             if make -n "$TARGET" >/dev/null 2>&1; then
               make "$TARGET"
             else
@@ -78,7 +74,6 @@ jobs:
               cd ..
               return
             fi
-
             cd ..
 
             PREFIX=""
@@ -87,22 +82,38 @@ jobs:
             SUFFIX=""
             [ -n "$VARIANT" ] && SUFFIX="_NO_LIMITS"
 
-            mkdir -p archive/$TAG/$BRAND/$MODEL_DIR
+            mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
 
-            cp bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin \
-               archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin
+            cp "bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin" \
+               "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin"
           }
 
-          hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-          [ -z "$hwfile" ] && echo "HW not found" && exit 1
+          if [ "$BUILD_MODE" = "single" ]; then
+            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
+            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
 
-          MODEL_DIR=$(basename "$(dirname "$hwfile")")
-          BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+            MODEL_DIR=$(basename "$(dirname "$hwfile")")
+            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-          build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
 
-          [ "$BUILD_NO_LIMITS" = "yes" ] && \
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            [ "$BUILD_NO_LIMITS" = "yes" ] && \
+              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+
+          else
+            find custom_hwconf -name "hw_*.h" | while read hwfile; do
+              MODEL=$(basename "$hwfile" .h)
+              MODEL=${MODEL#hw_}
+
+              MODEL_DIR=$(basename "$(dirname "$hwfile")")
+              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+
+              build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+
+              [ "$BUILD_NO_LIMITS" = "yes" ] && \
+                build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            done
+          fi
 
       - name: Push
         uses: peaceiris/actions-gh-pages@v3
