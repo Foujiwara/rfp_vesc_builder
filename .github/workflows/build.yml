@@ -62,13 +62,10 @@ jobs:
 
             TARGET="fw_${MODEL}${VARIANT}"
 
-            echo "Building $TARGET"
-
             cd bldc
             if make -n "$TARGET" >/dev/null 2>&1; then
               make "$TARGET"
             else
-              echo "Target $TARGET does not exist, skipping."
               cd ..
               return
             fi
@@ -96,16 +93,17 @@ jobs:
           [ "$BUILD_NO_LIMITS" = "yes" ] && \
             build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
 
-      - name: Prepare archive (move old versions + debug)
+      # 🔥 CLONE DU REPO ARCHIVE
+      - name: Clone archive repo
+        run: |
+          git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
+
+      # ✅ déplacement réel
+      - name: Prepare archive (move old versions)
         run: |
           set -e
 
           DATE=$(date +%Y%m%d_%H%M)
-
-          echo "=== DEBUG archive ==="
-          ls -R archive || true
-
-          mkdir -p deploy
 
           find archive -name "*.bin" | while read FILE; do
             NAME=$(basename "$FILE")
@@ -114,29 +112,21 @@ jobs:
 
             mkdir -p "$DEST_DIR/history/$DATE"
 
+            # déplacer ancien fichier existant
             if [ -f "$DEST_DIR/$NAME" ]; then
               mv "$DEST_DIR/$NAME" "$DEST_DIR/history/$DATE/$NAME"
             fi
 
+            # copier nouveau
+            mkdir -p "$DEST_DIR"
             cp "$FILE" "$DEST_DIR/$NAME"
           done
 
-          echo "=== DEBUG deploy ==="
-          ls -R deploy || true
-
-      - name: Ensure deploy not empty
+      - name: Push to archive
         run: |
-          if [ ! -d "deploy" ] || [ -z "$(ls -A deploy)" ]; then
-            echo "ERROR: deploy folder is empty"
-            exit 1
-          fi
-
-      - name: Push to firmware archive repo
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          external_repository: Foujiwara/rfp_fw_archive
-          publish_branch: main
-          publish_dir: ./deploy
-          personal_token: ${{ secrets.ARCHIVE_TOKEN }}
-          keep_files: true
-          enable_jekyll: false
+          cd deploy
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add .
+          git commit -m "update firmware $(date)" || echo "No changes"
+          git push
