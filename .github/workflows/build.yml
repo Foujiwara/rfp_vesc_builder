@@ -24,31 +24,28 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # ✅ injection AVEC arborescence
-      - name: Inject custom hwconf (keep folders)
+      # ✅ Injection ROOT (important)
+      - name: Inject custom hwconf (root)
         run: |
-          find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) | while read FILE; do
-            REL="${FILE#custom_hwconf/}"
-            DEST="bldc/hwconf/$REL"
-
-            mkdir -p "$(dirname "$DEST")"
-            cp "$FILE" "$DEST"
+          find custom_hwconf -name "hw_*.h" -o -name "hw_*.c" | while read FILE; do
+            cp "$FILE" bldc/hwconf/
           done
 
-      # ✅ patch adapté à l'arborescence
+      # ✅ Fix spécifique G300
+      - name: Fix MakerX G300 path
+        run: |
+          mkdir -p bldc/hwconf/makerx
+          find custom_hwconf -name "hw_go_foc_g300.*" | while read FILE; do
+            cp "$FILE" bldc/hwconf/makerx/
+          done
+
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
-          find custom_hwconf -name "hw_*.h" | while read SRC; do
-            REL="${SRC#custom_hwconf/}"
-            FILE="bldc/hwconf/$REL"
-
-            [ ! -f "$FILE" ] && continue
-
+          find bldc/hwconf -maxdepth 2 -name "hw_*.h" | while read FILE; do
             sed -i 's/\r$//' "$FILE"
             grep -q "$FW_NAME_SUFFIX" "$FILE" && continue
-
             sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$FILE"
           done
 
