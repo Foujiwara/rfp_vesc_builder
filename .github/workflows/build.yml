@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Stable Auto
+name: VESC Firmware Builder – Clean Stable
 
 on:
   workflow_dispatch:
@@ -24,33 +24,24 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # ✅ Injection AUTO universelle (root + tous sous-dossiers existants)
-      - name: Inject hwconf (auto universal)
+      # ✅ SAFE injection (ROOT ONLY)
+      - name: Inject hwconf (safe)
         run: |
-          find custom_hwconf -type f \( -name "hw_*.h" -o -name "hw_*.c" \) | while read FILE; do
-            NAME=$(basename "$FILE")
+          find custom_hwconf -type f \( -name "hw_*.h" -o -name "hw_*.c" \) \
+            -exec cp {} bldc/hwconf/ \;
 
-            # root (toujours nécessaire)
-            cp "$FILE" bldc/hwconf/
-
-            # duplication dans TOUS les sous-dossiers existants
-            find bldc/hwconf -type d | while read DIR; do
-              cp "$FILE" "$DIR/" 2>/dev/null || true
-            done
-          done
-
-      # ✅ Patch HW_NAME
+      # 🔧 Patch
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
-          find bldc/hwconf -name "hw_*.h" | while read FILE; do
+          find bldc/hwconf -maxdepth 1 -name "hw_*.h" | while read FILE; do
             sed -i 's/\r$//' "$FILE"
             grep -q "$FW_NAME_SUFFIX" "$FILE" && continue
             sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$FILE"
           done
 
-      # 🚀 BUILD robuste
+      # 🚀 BUILD
       - name: Build
         run: |
           set +e
@@ -128,12 +119,11 @@ jobs:
             done
           fi
 
-      # 📦 Clone archive
+      # 📦 Archive
       - name: Clone archive repo
         run: |
           git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
 
-      # 🧠 Historique
       - name: Prepare archive
         run: |
           DATE=$(date +%Y%m%d_%H%M)
@@ -154,7 +144,6 @@ jobs:
             cp "$FILE" "$DEST"
           done
 
-      # 🚀 Push
       - name: Push
         run: |
           cd deploy
