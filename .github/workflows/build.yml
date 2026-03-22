@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Final Stable
+name: VESC Firmware Builder – Autonomous
 
 on:
   workflow_dispatch:
@@ -8,45 +8,69 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout builder repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Clone VESC firmware
+      - name: Clone VESC
         run: |
           git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           sudo apt update
           sudo apt install -y build-essential git make wget libgl-dev libxcb-xinerama0
 
-      - name: Install VESC SDK
+      - name: Install SDK
         run: |
           cd bldc
           make arm_sdk_install
 
-      # ✅ INJECTION NON DESTRUCTIVE (clé du problème)
-      - name: Inject hwconf (safe)
+      # ✅ Injection propre
+      - name: Inject hwconf
         run: |
-          # copie dossiers custom SANS supprimer VESC
-          find custom_hwconf -mindepth 1 -type d | while read DIR; do
-            echo "Inject $(basename "$DIR")"
-            cp -r "$DIR" bldc/hwconf/
-          done
-
-          # copie fichiers root éventuels
-          find custom_hwconf -maxdepth 1 -type f \( -name "hw_*.h" -o -name "hw_*.c" \) \
+          cp -r custom_hwconf/* bldc/hwconf/ 2>/dev/null || true
+          find custom_hwconf -name "hw_*.h" -o -name "hw_*.c" \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ PATCH NOM INTERNE
+      # ✅ Patch HW_NAME
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
-          find bldc/hwconf -name "hw_*.h" | while read FILE; do
-            sed -i 's/\r$//' "$FILE"
-            grep -q "$FW_NAME_SUFFIX" "$FILE" && continue
-            sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$FILE"
+          find custom_hwconf -name "hw_*.h" | while read SRC; do
+            NAME=$(basename "$SRC")
+            TARGET=$(find bldc/hwconf -name "$NAME" | head -n1)
+
+            [ -z "$TARGET" ] && continue
+
+            sed -i 's/\r$//' "$TARGET"
+            sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$TARGET"
+          done
+
+      # 🔥 CRÉATION DES TARGETS AUTOMATIQUES
+      - name: Generate Makefile targets
+        run: |
+          cd bldc
+
+          echo "" >> Makefile
+          echo "# ==== AUTO TARGETS ====" >> Makefile
+
+          find ../custom_hwconf -name "hw_*.h" | while read FILE; do
+            MODEL=$(basename "$FILE" .h)
+            MODEL=${MODEL#hw_}
+
+            echo "" >> Makefile
+
+            # NORMAL
+            echo "fw_${MODEL}:" >> Makefile
+            echo "	@echo \"********* BUILD: ${MODEL} **********\"" >> Makefile
+            echo "	\$(MAKE) fw_${MODEL}_vescfw" >> Makefile
+
+            # NO LIMITS
+            echo "" >> Makefile
+            echo "fw_${MODEL}_no_limits:" >> Makefile
+            echo "	@echo \"********* BUILD: ${MODEL} NO LIMITS **********\"" >> Makefile
+            echo "	\$(MAKE) fw_${MODEL}_vescfw NO_LIMITS=1" >> Makefile
+
           done
 
       # 🚀 BUILD
@@ -54,12 +78,7 @@ jobs:
         run: |
           set +e
 
-          BUILD_MODE="all"
-          SINGLE_MODEL="C350_V3"
-
-          BUILD_NO_LIMITS="yes"
           PREFIX_RFP="yes"
-
           VERSION="V6.06"
           TAG="release_6_06"
 
@@ -76,19 +95,7 @@ jobs:
             echo "==== $TARGET ===="
 
             cd bldc
-            if make -n "$TARGET" >/dev/null 2>&1; then
-              if make "$TARGET"; then
-                echo "OK $TARGET"
-              else
-                echo "FAILED $TARGET"
-                cd ..
-                return
-              fi
-            else
-              echo "SKIP $TARGET"
-              cd ..
-              return
-            fi
+            make "$TARGET"
             cd ..
 
             PREFIX=""
@@ -99,47 +106,38 @@ jobs:
 
             mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
 
-            cp "bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin" \
+            BIN=$(find bldc/build -name "${MODEL}*.bin" | head -n1)
+
+            [ -z "$BIN" ] && return
+
+            cp "$BIN" \
               "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin"
           }
 
-          if [ "$BUILD_MODE" = "single" ]; then
-            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
+          find custom_hwconf -name "hw_*.h" | while read hwfile; do
+            MODEL=$(basename "$hwfile" .h)
+            MODEL=${MODEL#hw_}
 
             MODEL_DIR=$(basename "$(dirname "$hwfile")")
             BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
-            [ "$BUILD_NO_LIMITS" = "yes" ] && \
-              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+            build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+          done
 
-          else
-            find custom_hwconf -name "hw_*.h" | while read hwfile; do
-              MODEL=$(basename "$hwfile" .h)
-              MODEL=${MODEL#hw_}
-
-              MODEL_DIR=$(basename "$(dirname "$hwfile")")
-              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
-
-              build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
-              [ "$BUILD_NO_LIMITS" = "yes" ] && \
-                build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
-            done
-          fi
-
-      # 📦 CLONE ARCHIVE
+      # 📦 Archive repo
       - name: Clone archive repo
         run: |
           git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
 
-      # 🧠 HISTORIQUE + MAJ
       - name: Prepare archive
         run: |
           DATE=$(date +%Y%m%d_%H%M)
 
           find archive -name "*.bin" | while read FILE; do
             NAME=$(basename "$FILE")
-            REL="${FILE#archive/}"
+            REL=$(echo "$FILE" | cut -d'/' -f3-)
+
             DEST="deploy/$REL"
             DIR=$(dirname "$DEST")
 
@@ -153,8 +151,7 @@ jobs:
             cp "$FILE" "$DEST"
           done
 
-      # 🚀 PUSH
-      - name: Push to archive repo
+      - name: Push
         run: |
           cd deploy
           git config user.name "github-actions"
