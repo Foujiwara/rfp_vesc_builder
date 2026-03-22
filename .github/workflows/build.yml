@@ -8,96 +8,110 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
 
-      - name: Clone VESC
+      - name: Clone VESC firmware
         run: |
           git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y build-essential git make wget libgl-dev libxcb-xinerama0
 
-      - name: Install SDK
+      - name: Install VESC SDK
         run: |
           cd bldc
           make arm_sdk_install
 
-      # ✅ Injection ROOT (important)
-      - name: Inject custom hwconf (root)
+      # 🔥 Injection intelligente (compatible tous layouts)
+      - name: Inject custom hwconf
         run: |
-          find custom_hwconf -name "hw_*.h" -o -name "hw_*.c" | while read FILE; do
-            cp "$FILE" bldc/hwconf/
+          find custom_hwconf -type f \( -name "hw_*.h" -o -name "hw_*.c" \) | while read FILE; do
+            NAME=$(basename "$FILE")
+            MATCH=$(find bldc/hwconf -name "$NAME" | head -n1)
+
+            if [ -n "$MATCH" ]; then
+              cp "$FILE" "$MATCH"
+            else
+              cp "$FILE" bldc/hwconf/
+            fi
           done
 
-      # ✅ Fix spécifique G300
-      - name: Fix MakerX G300 path
-        run: |
-          mkdir -p bldc/hwconf/makerx
-          find custom_hwconf -name "hw_go_foc_g300.*" | while read FILE; do
-            cp "$FILE" bldc/hwconf/makerx/
-          done
-
+      # 🔧 Patch HW_NAME
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
-          find bldc/hwconf -maxdepth 2 -name "hw_*.h" | while read FILE; do
-            sed -i 's/\r$//' "$FILE"
-            grep -q "$FW_NAME_SUFFIX" "$FILE" && continue
-            sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$FILE"
+          find custom_hwconf -name "hw_*.h" | while read SRC; do
+            NAME=$(basename "$SRC")
+            TARGET=$(find bldc/hwconf -name "$NAME" | head -n1)
+
+            [ -z "$TARGET" ] && continue
+
+            sed -i 's/\r$//' "$TARGET"
+            grep -q "$FW_NAME_SUFFIX" "$TARGET" && continue
+
+            sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$TARGET"
           done
 
-      - name: Build
+      # 🚀 BUILD
+      - name: Build firmware
         run: |
           set +e
 
           BUILD_MODE="all"
           SINGLE_MODEL="C350_V3"
 
-          BUILD_NO_LIMITS="yes"
-          PREFIX_RFP="yes"
-
           VERSION="V6.06"
           TAG="release_6_06"
+          PREFIX_RFP="yes"
 
           mkdir -p archive/$TAG
+
+          cd bldc
+          TARGETS=$(make help | grep fw_ | awk '{print $1}')
+          cd ..
 
           build_one() {
             MODEL="$1"
             BRAND="$2"
             MODEL_DIR="$3"
-            VARIANT="$4"
 
-            TARGET="fw_${MODEL}${VARIANT}"
+            PREFIX=""
+            [ "$PREFIX_RFP" = "yes" ] && PREFIX="RFP_"
 
-            cd bldc
-            if make -n "$TARGET" >/dev/null 2>&1; then
+            mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
+
+            MATCHED=""
+            for T in $TARGETS; do
+              if echo "$T" | grep -qi "$MODEL"; then
+                MATCHED="$MATCHED $T"
+              fi
+            done
+
+            for TARGET in $MATCHED; do
+              echo "BUILD → $TARGET"
+
+              cd bldc
               if make "$TARGET"; then
                 echo "OK $TARGET"
               else
                 echo "FAILED $TARGET"
                 cd ..
-                return
+                continue
               fi
-            else
-              echo "SKIP $TARGET"
               cd ..
-              return
-            fi
-            cd ..
 
-            PREFIX=""
-            [ "$PREFIX_RFP" = "yes" ] && PREFIX="RFP_"
+              BIN=$(find bldc/build -name "*.bin" -newer bldc/build | head -n1)
+              [ -z "$BIN" ] && continue
 
-            SUFFIX=""
-            [ -n "$VARIANT" ] && SUFFIX="_NO_LIMITS"
+              NAME=$(basename "$TARGET" | sed 's/fw_//')
 
-            mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
-
-            cp "bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin" \
-               "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin"
+              cp "$BIN" \
+                "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${NAME}_${VERSION}.bin"
+            done
           }
 
           if [ "$BUILD_MODE" = "single" ]; then
@@ -106,9 +120,7 @@ jobs:
             MODEL_DIR=$(basename "$(dirname "$hwfile")")
             BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
-            [ "$BUILD_NO_LIMITS" = "yes" ] && \
-              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR"
 
           else
             find custom_hwconf -name "hw_*.h" | while read hwfile; do
@@ -118,16 +130,16 @@ jobs:
               MODEL_DIR=$(basename "$(dirname "$hwfile")")
               BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-              build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
-              [ "$BUILD_NO_LIMITS" = "yes" ] && \
-                build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+              build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR"
             done
           fi
 
+      # 📦 Clone archive repo
       - name: Clone archive repo
         run: |
           git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
 
+      # 🧠 Gestion historique
       - name: Prepare archive
         run: |
           DATE=$(date +%Y%m%d_%H%M)
@@ -148,7 +160,8 @@ jobs:
             cp "$FILE" "$DEST"
           done
 
-      - name: Push
+      # 🚀 PUSH
+      - name: Push to archive repo
         run: |
           cd deploy
           git config user.name "github-actions"
