@@ -8,41 +8,52 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
 
-      - name: Clone VESC
+      - name: Clone VESC firmware
         run: |
           git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y build-essential git make wget libgl-dev libxcb-xinerama0
 
-      - name: Install SDK
+      - name: Install VESC SDK
         run: |
           cd bldc
           make arm_sdk_install
 
-      # ✅ SAFE injection (ROOT ONLY)
-      - name: Inject hwconf (safe)
+      # ✅ INJECTION SAFE (ne casse pas VESC)
+      - name: Inject hwconf (safe folders)
         run: |
-          find custom_hwconf -type f \( -name "hw_*.h" -o -name "hw_*.c" \) \
+          # inject dossiers custom sans casser VESC
+          find custom_hwconf -mindepth 1 -maxdepth 1 -type d | while read DIR; do
+            NAME=$(basename "$DIR")
+            echo "Inject $NAME"
+
+            rm -rf "bldc/hwconf/$NAME" || true
+            cp -r "$DIR" "bldc/hwconf/"
+          done
+
+          # inject fichiers root
+          find custom_hwconf -maxdepth 1 -type f \( -name "hw_*.h" -o -name "hw_*.c" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # 🔧 Patch
+      # ✅ PATCH NOM INTERNE
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
-          find bldc/hwconf -maxdepth 1 -name "hw_*.h" | while read FILE; do
+          find bldc/hwconf -name "hw_*.h" | while read FILE; do
             sed -i 's/\r$//' "$FILE"
             grep -q "$FW_NAME_SUFFIX" "$FILE" && continue
             sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$FILE"
           done
 
       # 🚀 BUILD
-      - name: Build
+      - name: Build firmware
         run: |
           set +e
 
@@ -119,11 +130,12 @@ jobs:
             done
           fi
 
-      # 📦 Archive
+      # 📦 CLONE ARCHIVE
       - name: Clone archive repo
         run: |
           git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
 
+      # 🧠 HISTORIQUE + MAJ
       - name: Prepare archive
         run: |
           DATE=$(date +%Y%m%d_%H%M)
@@ -144,7 +156,8 @@ jobs:
             cp "$FILE" "$DEST"
           done
 
-      - name: Push
+      # 🚀 PUSH
+      - name: Push to archive repo
         run: |
           cd deploy
           git config user.name "github-actions"
