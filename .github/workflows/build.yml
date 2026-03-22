@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Multi HW Archive
+name: VESC Firmware Builder – Stable
 
 on:
   workflow_dispatch:
@@ -24,13 +24,13 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # ✅ injection SIMPLE (root)
+      # ✅ SIMPLE = ROOT (comme avant)
       - name: Inject hwconf
         run: |
           find custom_hwconf -type f \( -name "hw_*.h" -o -name "hw_*.c" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ patch
+      # ✅ PATCH
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
@@ -41,7 +41,7 @@ jobs:
             sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$FILE"
           done
 
-      # 🚀 BUILD SIMPLE ET FIABLE
+      # 🚀 BUILD = EXACT TON LOGIQUE D’ORIGINE + SAFE
       - name: Build
         run: |
           set +e
@@ -61,40 +61,38 @@ jobs:
             MODEL="$1"
             BRAND="$2"
             MODEL_DIR="$3"
+            VARIANT="$4"
+
+            TARGET="fw_${MODEL}${VARIANT}"
+
+            echo "==== $TARGET ===="
+
+            cd bldc
+            if make -n "$TARGET" >/dev/null 2>&1; then
+              if make "$TARGET"; then
+                echo "OK $TARGET"
+              else
+                echo "FAILED $TARGET"
+                cd ..
+                return
+              fi
+            else
+              echo "SKIP $TARGET"
+              cd ..
+              return
+            fi
+            cd ..
 
             PREFIX=""
             [ "$PREFIX_RFP" = "yes" ] && PREFIX="RFP_"
 
+            SUFFIX=""
+            [ -n "$VARIANT" ] && SUFFIX="_NO_LIMITS"
+
             mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
 
-            # NORMAL
-            cd bldc
-            if make -n "fw_${MODEL}" >/dev/null 2>&1; then
-              echo "BUILD fw_${MODEL}"
-              make "fw_${MODEL}"
-            else
-              echo "SKIP fw_${MODEL}"
-            fi
-            cd ..
-
-            # NO LIMITS
-            if [ "$BUILD_NO_LIMITS" = "yes" ]; then
-              cd bldc
-              if make -n "fw_${MODEL}_no_limits" >/dev/null 2>&1; then
-                echo "BUILD fw_${MODEL}_no_limits"
-                make "fw_${MODEL}_no_limits"
-              else
-                echo "SKIP fw_${MODEL}_no_limits"
-              fi
-              cd ..
-            fi
-
-            # COPY RESULT
-            find bldc/build -name "${MODEL}*.bin" | while read BIN; do
-              NAME=$(basename "$BIN")
-              cp "$BIN" \
-                "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${NAME%.*}_${VERSION}.bin"
-            done
+            cp "bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin" \
+              "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin"
           }
 
           if [ "$BUILD_MODE" = "single" ]; then
@@ -103,7 +101,9 @@ jobs:
             MODEL_DIR=$(basename "$(dirname "$hwfile")")
             BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR"
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+            [ "$BUILD_NO_LIMITS" = "yes" ] && \
+              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
 
           else
             find custom_hwconf -name "hw_*.h" | while read hwfile; do
@@ -113,16 +113,18 @@ jobs:
               MODEL_DIR=$(basename "$(dirname "$hwfile")")
               BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-              build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR"
+              build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+              [ "$BUILD_NO_LIMITS" = "yes" ] && \
+                build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
             done
           fi
 
-      # 📦 clone archive
+      # 📦 CLONE ARCHIVE
       - name: Clone archive repo
         run: |
           git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
 
-      # 🧠 historique
+      # 🧠 HISTORIQUE (FIX)
       - name: Prepare archive
         run: |
           DATE=$(date +%Y%m%d_%H%M)
@@ -144,176 +146,6 @@ jobs:
           done
 
       - name: Push
-        run: |
-          cd deploy
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add .
-          git commit -m "update $(date)" || echo "No changes"
-          git push https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.gitname: VESC Firmware Builder – Multi HW Archive
-
-on:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout builder repo
-        uses: actions/checkout@v4
-
-      - name: Clone VESC firmware
-        run: |
-          git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
-
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y build-essential git make wget libgl-dev libxcb-xinerama0
-
-      - name: Install VESC SDK
-        run: |
-          cd bldc
-          make arm_sdk_install
-
-      # 🔥 Injection intelligente (compatible tous layouts)
-      - name: Inject custom hwconf
-        run: |
-          find custom_hwconf -type f \( -name "hw_*.h" -o -name "hw_*.c" \) | while read FILE; do
-            NAME=$(basename "$FILE")
-            MATCH=$(find bldc/hwconf -name "$NAME" | head -n1)
-
-            if [ -n "$MATCH" ]; then
-              cp "$FILE" "$MATCH"
-            else
-              cp "$FILE" bldc/hwconf/
-            fi
-          done
-
-      # 🔧 Patch HW_NAME
-      - name: Patch HW_NAME
-        run: |
-          FW_NAME_SUFFIX="RFP-Performance"
-
-          find custom_hwconf -name "hw_*.h" | while read SRC; do
-            NAME=$(basename "$SRC")
-            TARGET=$(find bldc/hwconf -name "$NAME" | head -n1)
-
-            [ -z "$TARGET" ] && continue
-
-            sed -i 's/\r$//' "$TARGET"
-            grep -q "$FW_NAME_SUFFIX" "$TARGET" && continue
-
-            sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$TARGET"
-          done
-
-      # 🚀 BUILD
-      - name: Build firmware
-        run: |
-          set +e
-
-          BUILD_MODE="all"
-          SINGLE_MODEL="C350_V3"
-
-          VERSION="V6.06"
-          TAG="release_6_06"
-          PREFIX_RFP="yes"
-
-          mkdir -p archive/$TAG
-
-          cd bldc
-          TARGETS=$(make help | grep fw_ | awk '{print $1}')
-          cd ..
-
-          build_one() {
-            MODEL="$1"
-            BRAND="$2"
-            MODEL_DIR="$3"
-
-            PREFIX=""
-            [ "$PREFIX_RFP" = "yes" ] && PREFIX="RFP_"
-
-            mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
-
-            MATCHED=""
-            for T in $TARGETS; do
-              if echo "$T" | grep -qi "$MODEL"; then
-                MATCHED="$MATCHED $T"
-              fi
-            done
-
-            for TARGET in $MATCHED; do
-              echo "BUILD → $TARGET"
-
-              cd bldc
-              if make "$TARGET"; then
-                echo "OK $TARGET"
-              else
-                echo "FAILED $TARGET"
-                cd ..
-                continue
-              fi
-              cd ..
-
-              BIN=$(find bldc/build -name "*.bin" -newer bldc/build | head -n1)
-              [ -z "$BIN" ] && continue
-
-              NAME=$(basename "$TARGET" | sed 's/fw_//')
-
-              cp "$BIN" \
-                "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${NAME}_${VERSION}.bin"
-            done
-          }
-
-          if [ "$BUILD_MODE" = "single" ]; then
-            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-
-            MODEL_DIR=$(basename "$(dirname "$hwfile")")
-            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
-
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR"
-
-          else
-            find custom_hwconf -name "hw_*.h" | while read hwfile; do
-              MODEL=$(basename "$hwfile" .h)
-              MODEL=${MODEL#hw_}
-
-              MODEL_DIR=$(basename "$(dirname "$hwfile")")
-              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
-
-              build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR"
-            done
-          fi
-
-      # 📦 Clone archive repo
-      - name: Clone archive repo
-        run: |
-          git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
-
-      # 🧠 Gestion historique
-      - name: Prepare archive
-        run: |
-          DATE=$(date +%Y%m%d_%H%M)
-
-          find archive -name "*.bin" | while read FILE; do
-            NAME=$(basename "$FILE")
-            REL="${FILE#archive/}"
-            DEST="deploy/$REL"
-            DIR=$(dirname "$DEST")
-
-            mkdir -p "$DIR"
-
-            if [ -f "$DEST" ]; then
-              mkdir -p "$DIR/history/$DATE"
-              mv "$DEST" "$DIR/history/$DATE/$NAME"
-            fi
-
-            cp "$FILE" "$DEST"
-          done
-
-      # 🚀 PUSH
-      - name: Push to archive repo
         run: |
           cd deploy
           git config user.name "github-actions"
