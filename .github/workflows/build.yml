@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Clean Stable
+name: VESC Firmware Builder – Final Stable
 
 on:
   workflow_dispatch:
@@ -25,19 +25,16 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # ✅ INJECTION SAFE (ne casse pas VESC)
-      - name: Inject hwconf (safe folders)
+      # ✅ INJECTION NON DESTRUCTIVE (clé du problème)
+      - name: Inject hwconf (safe)
         run: |
-          # inject dossiers custom sans casser VESC
-          find custom_hwconf -mindepth 1 -maxdepth 1 -type d | while read DIR; do
-            NAME=$(basename "$DIR")
-            echo "Inject $NAME"
-
-            rm -rf "bldc/hwconf/$NAME" || true
-            cp -r "$DIR" "bldc/hwconf/"
+          # copie dossiers custom SANS supprimer VESC
+          find custom_hwconf -mindepth 1 -type d | while read DIR; do
+            echo "Inject $(basename "$DIR")"
+            cp -r "$DIR" bldc/hwconf/
           done
 
-          # inject fichiers root
+          # copie fichiers root éventuels
           find custom_hwconf -maxdepth 1 -type f \( -name "hw_*.h" -o -name "hw_*.c" \) \
             -exec cp {} bldc/hwconf/ \;
 
