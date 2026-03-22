@@ -24,13 +24,11 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # inject root (nécessaire pour make fw_xxx)
       - name: Inject custom hwconf
         run: |
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # patch uniquement tes HW
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
@@ -49,9 +47,9 @@ jobs:
 
       - name: Build
         run: |
-          set -e
+          set +e
 
-          BUILD_MODE="all"   # all | single
+          BUILD_MODE="all"
           SINGLE_MODEL="C350_V3"
 
           BUILD_NO_LIMITS="yes"
@@ -70,9 +68,17 @@ jobs:
 
             TARGET="fw_${MODEL}${VARIANT}"
 
+            echo "---- $TARGET ----"
+
             cd bldc
             if make -n "$TARGET" >/dev/null 2>&1; then
-              make "$TARGET"
+              if make "$TARGET"; then
+                echo "OK $TARGET"
+              else
+                echo "FAILED $TARGET"
+                cd ..
+                return
+              fi
             else
               echo "SKIP $TARGET"
               cd ..
@@ -116,12 +122,10 @@ jobs:
             done
           fi
 
-      # clone repo archive (important pour récupérer anciens fichiers)
       - name: Clone archive repo
         run: |
           git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
 
-      # déplacement réel des anciens fichiers
       - name: Prepare archive
         run: |
           set -e
