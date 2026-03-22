@@ -24,18 +24,25 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      - name: Inject custom hwconf
+      # ✅ injection AVEC arborescence
+      - name: Inject custom hwconf (keep folders)
         run: |
-          find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
-            -exec cp {} bldc/hwconf/ \;
+          find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) | while read FILE; do
+            REL="${FILE#custom_hwconf/}"
+            DEST="bldc/hwconf/$REL"
 
+            mkdir -p "$(dirname "$DEST")"
+            cp "$FILE" "$DEST"
+          done
+
+      # ✅ patch adapté à l'arborescence
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
           find custom_hwconf -name "hw_*.h" | while read SRC; do
-            NAME=$(basename "$SRC")
-            FILE="bldc/hwconf/$NAME"
+            REL="${SRC#custom_hwconf/}"
+            FILE="bldc/hwconf/$REL"
 
             [ ! -f "$FILE" ] && continue
 
@@ -67,8 +74,6 @@ jobs:
             VARIANT="$4"
 
             TARGET="fw_${MODEL}${VARIANT}"
-
-            echo "---- $TARGET ----"
 
             cd bldc
             if make -n "$TARGET" >/dev/null 2>&1; then
@@ -128,22 +133,22 @@ jobs:
 
       - name: Prepare archive
         run: |
-          set -e
           DATE=$(date +%Y%m%d_%H%M)
 
           find archive -name "*.bin" | while read FILE; do
             NAME=$(basename "$FILE")
-            REL_PATH="${FILE#archive/}"
-            DEST_DIR="deploy/$(dirname "$REL_PATH")"
+            REL="${FILE#archive/}"
+            DEST="deploy/$REL"
+            DIR=$(dirname "$DEST")
 
-            mkdir -p "$DEST_DIR"
+            mkdir -p "$DIR"
 
-            if [ -f "$DEST_DIR/$NAME" ]; then
-              mkdir -p "$DEST_DIR/history/$DATE"
-              mv "$DEST_DIR/$NAME" "$DEST_DIR/history/$DATE/$NAME"
+            if [ -f "$DEST" ]; then
+              mkdir -p "$DIR/history/$DATE"
+              mv "$DEST" "$DIR/history/$DATE/$NAME"
             fi
 
-            cp "$FILE" "$DEST_DIR/$NAME"
+            cp "$FILE" "$DEST"
           done
 
       - name: Push
