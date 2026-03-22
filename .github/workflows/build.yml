@@ -24,18 +24,26 @@ jobs:
           cd bldc
           make arm_sdk_install
 
+      # inject root (nécessaire pour make fw_xxx)
       - name: Inject custom hwconf
         run: |
           find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
+      # patch uniquement tes HW
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
-          find bldc/hwconf -maxdepth 1 -name "hw_*.h" | while read FILE; do
+          find custom_hwconf -name "hw_*.h" | while read SRC; do
+            NAME=$(basename "$SRC")
+            FILE="bldc/hwconf/$NAME"
+
+            [ ! -f "$FILE" ] && continue
+
             sed -i 's/\r$//' "$FILE"
             grep -q "$FW_NAME_SUFFIX" "$FILE" && continue
+
             sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$FILE"
           done
 
@@ -43,7 +51,7 @@ jobs:
         run: |
           set -e
 
-          BUILD_MODE="single"
+          BUILD_MODE="all"   # all | single
           SINGLE_MODEL="C350_V3"
 
           BUILD_NO_LIMITS="yes"
@@ -66,6 +74,7 @@ jobs:
             if make -n "$TARGET" >/dev/null 2>&1; then
               make "$TARGET"
             else
+              echo "SKIP $TARGET"
               cd ..
               return
             fi
@@ -83,26 +92,39 @@ jobs:
                "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin"
           }
 
-          hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
+          if [ "$BUILD_MODE" = "single" ]; then
+            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
 
-          MODEL_DIR=$(basename "$(dirname "$hwfile")")
-          BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+            MODEL_DIR=$(basename "$(dirname "$hwfile")")
+            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-          build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+            [ "$BUILD_NO_LIMITS" = "yes" ] && \
+              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
 
-          [ "$BUILD_NO_LIMITS" = "yes" ] && \
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+          else
+            find custom_hwconf -name "hw_*.h" | while read hwfile; do
+              MODEL=$(basename "$hwfile" .h)
+              MODEL=${MODEL#hw_}
 
-      # 🔥 CLONE DU REPO ARCHIVE
+              MODEL_DIR=$(basename "$(dirname "$hwfile")")
+              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+
+              build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+              [ "$BUILD_NO_LIMITS" = "yes" ] && \
+                build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            done
+          fi
+
+      # clone repo archive (important pour récupérer anciens fichiers)
       - name: Clone archive repo
         run: |
           git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
 
-      # ✅ déplacement réel
-      - name: Prepare archive (move old versions)
+      # déplacement réel des anciens fichiers
+      - name: Prepare archive
         run: |
           set -e
-
           DATE=$(date +%Y%m%d_%H%M)
 
           find archive -name "*.bin" | while read FILE; do
@@ -110,23 +132,21 @@ jobs:
             REL_PATH="${FILE#archive/}"
             DEST_DIR="deploy/$(dirname "$REL_PATH")"
 
-            mkdir -p "$DEST_DIR/history/$DATE"
+            mkdir -p "$DEST_DIR"
 
-            # déplacer ancien fichier existant
             if [ -f "$DEST_DIR/$NAME" ]; then
+              mkdir -p "$DEST_DIR/history/$DATE"
               mv "$DEST_DIR/$NAME" "$DEST_DIR/history/$DATE/$NAME"
             fi
 
-            # copier nouveau
-            mkdir -p "$DEST_DIR"
             cp "$FILE" "$DEST_DIR/$NAME"
           done
 
-      - name: Push to archive
+      - name: Push
         run: |
           cd deploy
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add .
-          git commit -m "update firmware $(date)" || echo "No changes"
-          git push
+          git commit -m "update $(date)" || echo "No changes"
+          git push https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git
