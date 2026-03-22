@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Stable
+name: VESC Firmware Builder – Stable Auto
 
 on:
   workflow_dispatch:
@@ -24,13 +24,22 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # ✅ SIMPLE = ROOT (comme avant)
-      - name: Inject hwconf
+      # ✅ Injection AUTO universelle (root + tous sous-dossiers existants)
+      - name: Inject hwconf (auto universal)
         run: |
-          find custom_hwconf -type f \( -name "hw_*.h" -o -name "hw_*.c" \) \
-            -exec cp {} bldc/hwconf/ \;
+          find custom_hwconf -type f \( -name "hw_*.h" -o -name "hw_*.c" \) | while read FILE; do
+            NAME=$(basename "$FILE")
 
-      # ✅ PATCH
+            # root (toujours nécessaire)
+            cp "$FILE" bldc/hwconf/
+
+            # duplication dans TOUS les sous-dossiers existants
+            find bldc/hwconf -type d | while read DIR; do
+              cp "$FILE" "$DIR/" 2>/dev/null || true
+            done
+          done
+
+      # ✅ Patch HW_NAME
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
@@ -41,7 +50,7 @@ jobs:
             sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$FILE"
           done
 
-      # 🚀 BUILD = EXACT TON LOGIQUE D’ORIGINE + SAFE
+      # 🚀 BUILD robuste
       - name: Build
         run: |
           set +e
@@ -119,12 +128,12 @@ jobs:
             done
           fi
 
-      # 📦 CLONE ARCHIVE
+      # 📦 Clone archive
       - name: Clone archive repo
         run: |
           git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
 
-      # 🧠 HISTORIQUE (FIX)
+      # 🧠 Historique
       - name: Prepare archive
         run: |
           DATE=$(date +%Y%m%d_%H%M)
@@ -145,6 +154,7 @@ jobs:
             cp "$FILE" "$DEST"
           done
 
+      # 🚀 Push
       - name: Push
         run: |
           cd deploy
