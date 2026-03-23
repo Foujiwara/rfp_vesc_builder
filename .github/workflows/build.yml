@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Final Strict Stable
+name: VESC Firmware Builder – Final Stable
 
 on:
   workflow_dispatch:
@@ -25,16 +25,13 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # ✅ Injection COMPLETE (dépendances incluses)
-      - name: Inject hwconf (full safe)
+      - name: Inject hwconf
         run: |
           cp -r custom_hwconf/* bldc/hwconf/ 2>/dev/null || true
 
-          # fallback root pour compat VESC
           find custom_hwconf -name "hw_*.h" -o -name "hw_*.c" \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ Patch HW_NAME uniquement sur tes fichiers
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
@@ -51,12 +48,11 @@ jobs:
             sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$TARGET"
           done
 
-      # 🚀 BUILD STRICT
       - name: Build firmware
         run: |
           set -e
 
-          BUILD_MODE="single"        # all | single
+          BUILD_MODE="single"
           SINGLE_MODEL="go_foc_k900"
 
           BUILD_NO_LIMITS="yes"
@@ -97,11 +93,20 @@ jobs:
 
             mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
 
-            cp "bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin" \
-              "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin"
+            BIN_PATH="bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin"
+
+            if [ ! -f "$BIN_PATH" ]; then
+              BIN_PATH="bldc/build/${MODEL}/${MODEL}.bin"
+            fi
+
+            if [ -f "$BIN_PATH" ]; then
+              cp "$BIN_PATH" \
+                "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin"
+            else
+              echo "ERROR: BIN not found for $MODEL"
+            fi
           }
 
-          # 🔥 SINGLE MODE STRICT
           if [ "$BUILD_MODE" = "single" ]; then
             echo ">>> SINGLE BUILD MODE: $SINGLE_MODEL"
 
@@ -124,30 +129,12 @@ jobs:
             build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" ""
 
             if [ "$BUILD_NO_LIMITS" = "yes" ]; then
-              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits" || true
             fi
 
             exit 0
           fi
 
-          # 🔥 FULL MODE
-          echo ">>> FULL BUILD MODE"
-
-          find custom_hwconf -name "hw_*.h" | while read hwfile; do
-            MODEL_TECH=$(basename "$hwfile" .h)
-            MODEL_TECH=${MODEL_TECH#hw_}
-
-            MODEL_DIR=$(basename "$(dirname "$hwfile")")
-            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
-
-            build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "" || true
-
-            if [ "$BUILD_NO_LIMITS" = "yes" ]; then
-              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits" || true
-            fi
-          done
-
-      # 📦 Archive
       - name: Clone archive repo
         run: |
           git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
@@ -173,8 +160,7 @@ jobs:
             cp "$FILE" "$DEST"
           done
 
-      # 🚀 Push
-      - name: Push to archive repo
+      - name: Push
         run: |
           cd deploy
           git config user.name "github-actions"
