@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Autonomous
+name: VESC Firmware Builder – Stable Clean
 
 on:
   workflow_dispatch:
@@ -24,61 +24,40 @@ jobs:
           cd bldc
           make arm_sdk_install
 
-      # ✅ Injection propre
+      # ✅ Injection EXACTE (comme ton code d'origine)
       - name: Inject hwconf
         run: |
-          cp -r custom_hwconf/* bldc/hwconf/ 2>/dev/null || true
-          find custom_hwconf -name "hw_*.h" -o -name "hw_*.c" \
+          find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ Patch HW_NAME
+      # ✅ Patch uniquement tes fichiers
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
           find custom_hwconf -name "hw_*.h" | while read SRC; do
             NAME=$(basename "$SRC")
-            TARGET=$(find bldc/hwconf -name "$NAME" | head -n1)
+            TARGET="bldc/hwconf/$NAME"
 
-            [ -z "$TARGET" ] && continue
+            [ ! -f "$TARGET" ] && continue
 
             sed -i 's/\r$//' "$TARGET"
+            grep -q "$FW_NAME_SUFFIX" "$TARGET" && continue
+
             sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$TARGET"
           done
 
-      # 🔥 CRÉATION DES TARGETS AUTOMATIQUES
-      - name: Generate Makefile targets
-        run: |
-          cd bldc
-
-          echo "" >> Makefile
-          echo "# ==== AUTO TARGETS ====" >> Makefile
-
-          find ../custom_hwconf -name "hw_*.h" | while read FILE; do
-            MODEL=$(basename "$FILE" .h)
-            MODEL=${MODEL#hw_}
-
-            echo "" >> Makefile
-
-            # NORMAL
-            echo "fw_${MODEL}:" >> Makefile
-            echo "	@echo \"********* BUILD: ${MODEL} **********\"" >> Makefile
-            echo "	\$(MAKE) fw_${MODEL}_vescfw" >> Makefile
-
-            # NO LIMITS
-            echo "" >> Makefile
-            echo "fw_${MODEL}_no_limits:" >> Makefile
-            echo "	@echo \"********* BUILD: ${MODEL} NO LIMITS **********\"" >> Makefile
-            echo "	\$(MAKE) fw_${MODEL}_vescfw NO_LIMITS=1" >> Makefile
-
-          done
-
-      # 🚀 BUILD
+      # 🚀 BUILD (identique origine + safe)
       - name: Build firmware
         run: |
-          set +e
+          set -e
 
+          BUILD_MODE="all"
+          SINGLE_MODEL="C350_V3"
+
+          BUILD_NO_LIMITS="yes"
           PREFIX_RFP="yes"
+
           VERSION="V6.06"
           TAG="release_6_06"
 
@@ -92,40 +71,64 @@ jobs:
 
             TARGET="fw_${MODEL}${VARIANT}"
 
-            echo "==== $TARGET ===="
+            echo "------------------------------"
+            echo "Building $TARGET"
+            echo "------------------------------"
 
             cd bldc
-            make "$TARGET"
+            if make -n "$TARGET" >/dev/null 2>&1; then
+              make "$TARGET"
+            else
+              echo "Target $TARGET does not exist, skipping."
+              cd ..
+              return
+            fi
             cd ..
 
-            PREFIX=""
-            [ "$PREFIX_RFP" = "yes" ] && PREFIX="RFP_"
+            NAME_PREFIX=""
+            [ "$PREFIX_RFP" = "yes" ] && NAME_PREFIX="RFP_"
 
-            SUFFIX=""
-            [ -n "$VARIANT" ] && SUFFIX="_NO_LIMITS"
+            VARIANT_NAME=""
+            [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
 
             mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
 
-            BIN=$(find bldc/build -name "${MODEL}*.bin" | head -n1)
-
-            [ -z "$BIN" ] && return
-
-            cp "$BIN" \
-              "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin"
+            cp "bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin" \
+               "archive/$TAG/$BRAND/$MODEL_DIR/${NAME_PREFIX}${MODEL}${VARIANT_NAME}_${VERSION}.bin"
           }
 
-          find custom_hwconf -name "hw_*.h" | while read hwfile; do
-            MODEL=$(basename "$hwfile" .h)
-            MODEL=${MODEL#hw_}
+          if [ "$BUILD_MODE" = "single" ]; then
+            echo ">>> SINGLE BUILD MODE: $SINGLE_MODEL"
+
+            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
+            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
 
             MODEL_DIR=$(basename "$(dirname "$hwfile")")
             BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-            build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
-            build_one "$MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
-          done
+            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
 
-      # 📦 Archive repo
+            [ "$BUILD_NO_LIMITS" = "yes" ] && \
+              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+
+          else
+            echo ">>> FULL BUILD MODE"
+
+            find custom_hwconf -name "hw_*.h" | while read hwfile; do
+              MODEL_TECH=$(basename "$hwfile" .h)
+              MODEL_TECH=${MODEL_TECH#hw_}
+
+              MODEL_DIR=$(basename "$(dirname "$hwfile")")
+              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+
+              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" ""
+
+              [ "$BUILD_NO_LIMITS" = "yes" ] && \
+                build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            done
+          fi
+
+      # 📦 Archive
       - name: Clone archive repo
         run: |
           git clone https://x-access-token:${{ secrets.ARCHIVE_TOKEN }}@github.com/Foujiwara/rfp_fw_archive.git deploy || mkdir deploy
@@ -136,7 +139,7 @@ jobs:
 
           find archive -name "*.bin" | while read FILE; do
             NAME=$(basename "$FILE")
-            REL=$(echo "$FILE" | cut -d'/' -f3-)
+            REL="${FILE#archive/}"
 
             DEST="deploy/$REL"
             DIR=$(dirname "$DEST")
