@@ -1,4 +1,4 @@
-name: VESC Firmware Builder – Stable Clean
+name: VESC Firmware Builder – Final Strict Stable
 
 on:
   workflow_dispatch:
@@ -8,38 +8,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
 
-      - name: Clone VESC
+      - name: Clone VESC firmware
         run: |
           git clone --depth 1 --branch release_6_06 https://github.com/vedderb/bldc.git bldc
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           sudo apt update
           sudo apt install -y build-essential git make wget libgl-dev libxcb-xinerama0
 
-      - name: Install SDK
+      - name: Install VESC SDK
         run: |
           cd bldc
           make arm_sdk_install
 
-      # ✅ Injection EXACTE (comme ton code d'origine)
-      - name: Inject hwconf
+      # ✅ Injection COMPLETE (dépendances incluses)
+      - name: Inject hwconf (full safe)
         run: |
-          find custom_hwconf -type f \( -name "hw_*.c" -o -name "hw_*.h" \) \
+          cp -r custom_hwconf/* bldc/hwconf/ 2>/dev/null || true
+
+          # fallback root pour compat VESC
+          find custom_hwconf -name "hw_*.h" -o -name "hw_*.c" \
             -exec cp {} bldc/hwconf/ \;
 
-      # ✅ Patch uniquement tes fichiers
+      # ✅ Patch HW_NAME uniquement sur tes fichiers
       - name: Patch HW_NAME
         run: |
           FW_NAME_SUFFIX="RFP-Performance"
 
           find custom_hwconf -name "hw_*.h" | while read SRC; do
             NAME=$(basename "$SRC")
-            TARGET="bldc/hwconf/$NAME"
+            TARGET=$(find bldc/hwconf -name "$NAME" | head -n1)
 
-            [ ! -f "$TARGET" ] && continue
+            [ -z "$TARGET" ] && continue
 
             sed -i 's/\r$//' "$TARGET"
             grep -q "$FW_NAME_SUFFIX" "$TARGET" && continue
@@ -47,13 +51,13 @@ jobs:
             sed -i -E '/#define[[:space:]]+HW_NAME/ s|"([^"]*)"|"\1 '"$FW_NAME_SUFFIX"'"|' "$TARGET"
           done
 
-      # 🚀 BUILD (identique origine + safe)
+      # 🚀 BUILD STRICT
       - name: Build firmware
         run: |
           set -e
 
-          BUILD_MODE="all"
-          SINGLE_MODEL="C350_V3"
+          BUILD_MODE="single"        # all | single
+          SINGLE_MODEL="go_foc_k900"
 
           BUILD_NO_LIMITS="yes"
           PREFIX_RFP="yes"
@@ -79,54 +83,69 @@ jobs:
             if make -n "$TARGET" >/dev/null 2>&1; then
               make "$TARGET"
             else
-              echo "Target $TARGET does not exist, skipping."
+              echo "ERROR: Target introuvable → $TARGET"
               cd ..
-              return
+              return 1
             fi
             cd ..
 
-            NAME_PREFIX=""
-            [ "$PREFIX_RFP" = "yes" ] && NAME_PREFIX="RFP_"
+            PREFIX=""
+            [ "$PREFIX_RFP" = "yes" ] && PREFIX="RFP_"
 
-            VARIANT_NAME=""
-            [ -n "$VARIANT" ] && VARIANT_NAME="_NO_LIMITS"
+            SUFFIX=""
+            [ -n "$VARIANT" ] && SUFFIX="_NO_LIMITS"
 
             mkdir -p "archive/$TAG/$BRAND/$MODEL_DIR"
 
             cp "bldc/build/${MODEL}${VARIANT}/${MODEL}${VARIANT}.bin" \
-               "archive/$TAG/$BRAND/$MODEL_DIR/${NAME_PREFIX}${MODEL}${VARIANT_NAME}_${VERSION}.bin"
+              "archive/$TAG/$BRAND/$MODEL_DIR/${PREFIX}${MODEL}${SUFFIX}_${VERSION}.bin"
           }
 
+          # 🔥 SINGLE MODE STRICT
           if [ "$BUILD_MODE" = "single" ]; then
             echo ">>> SINGLE BUILD MODE: $SINGLE_MODEL"
 
-            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}.h" | head -n1)
-            [ -z "$hwfile" ] && echo "ERROR: hw_${SINGLE_MODEL}.h not found" && exit 1
+            hwfile=$(find custom_hwconf -name "hw_${SINGLE_MODEL}*.h" | head -n1)
+
+            if [ -z "$hwfile" ]; then
+              echo "ERROR: Target introuvable → $SINGLE_MODEL"
+              exit 1
+            fi
+
+            MODEL_TECH=$(basename "$hwfile" .h)
+            MODEL_TECH=${MODEL_TECH#hw_}
 
             MODEL_DIR=$(basename "$(dirname "$hwfile")")
             BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
 
-            build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" ""
+            echo "Resolved: $MODEL_TECH"
+            echo "Path: $BRAND_DIR / $MODEL_DIR"
 
-            [ "$BUILD_NO_LIMITS" = "yes" ] && \
-              build_one "$SINGLE_MODEL" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" ""
 
-          else
-            echo ">>> FULL BUILD MODE"
+            if [ "$BUILD_NO_LIMITS" = "yes" ]; then
+              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
+            fi
 
-            find custom_hwconf -name "hw_*.h" | while read hwfile; do
-              MODEL_TECH=$(basename "$hwfile" .h)
-              MODEL_TECH=${MODEL_TECH#hw_}
-
-              MODEL_DIR=$(basename "$(dirname "$hwfile")")
-              BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
-
-              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" ""
-
-              [ "$BUILD_NO_LIMITS" = "yes" ] && \
-                build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits"
-            done
+            exit 0
           fi
+
+          # 🔥 FULL MODE
+          echo ">>> FULL BUILD MODE"
+
+          find custom_hwconf -name "hw_*.h" | while read hwfile; do
+            MODEL_TECH=$(basename "$hwfile" .h)
+            MODEL_TECH=${MODEL_TECH#hw_}
+
+            MODEL_DIR=$(basename "$(dirname "$hwfile")")
+            BRAND_DIR=$(basename "$(dirname "$(dirname "$hwfile")")")
+
+            build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "" || true
+
+            if [ "$BUILD_NO_LIMITS" = "yes" ]; then
+              build_one "$MODEL_TECH" "$BRAND_DIR" "$MODEL_DIR" "_no_limits" || true
+            fi
+          done
 
       # 📦 Archive
       - name: Clone archive repo
@@ -154,7 +173,8 @@ jobs:
             cp "$FILE" "$DEST"
           done
 
-      - name: Push
+      # 🚀 Push
+      - name: Push to archive repo
         run: |
           cd deploy
           git config user.name "github-actions"
